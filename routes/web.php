@@ -18,7 +18,7 @@ use App\Http\Controllers\Admin\SuperAdminController;
 |--------------------------------------------------------------------------
 */
 
-Route::domain('admin.maboutique.tech')->group(function () {
+// Route::domain('admin.maboutique.tech')->group(function () {
 // Password Reset Routes
 Route::get('password/reset', [App\Http\Controllers\Auth\PasswordResetController::class, 'showLinkRequestForm'])->name('password.request');
 Route::post('password/email', [App\Http\Controllers\Auth\PasswordResetController::class, 'sendResetLinkEmail'])->name('password.email');
@@ -44,6 +44,13 @@ Route::middleware(['auth'])->prefix('admin')->group(function () {
     Route::get('/admins', [SuperAdminController::class, 'adminsIndex'])->name('admin.admins.index');
     Route::post('/admins/{user}/update-limit', [SuperAdminController::class, 'updateBoutiqueLimit'])->name('admin.admins.update-limit');
     Route::delete('/admins/{admin}', [SuperAdminController::class, 'adminDestroy'])->name('admin.admins.destroy');
+
+    // Licences & Abonnements Management
+    Route::get('/licences', [SuperAdminController::class, 'licencesIndex'])->name('admin.licences.index');
+    Route::post('/licences', [SuperAdminController::class, 'licenceStore'])->name('admin.licences.store');
+    Route::post('/boutiques/{boutique}/prolonger-licence', [SuperAdminController::class, 'licenceProlongerDirect'])->name('admin.boutiques.prolonger-licence');
+    Route::post('/licences/{licence}/revoquer', [SuperAdminController::class, 'licenceRevoquer'])->name('admin.licences.revoquer');
+    Route::delete('/licences/{licence}', [SuperAdminController::class, 'licenceDestroy'])->name('admin.licences.destroy');
 });
 
 Route::get('/', function () {
@@ -57,7 +64,7 @@ Route::get('/loginAdmin', function () {
 Route::post('/loginAdmin', [SuperAdminController::class, 'login'])->name('admin.login');
 Route::post('/logoutAdmin', [SuperAdminController::class, 'logout'])->name('logout');
 
-});
+// });
 /*
 |--------------------------------------------------------------------------
 | Catch-all route pour Angular (frontend)

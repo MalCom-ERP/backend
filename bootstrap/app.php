@@ -17,6 +17,11 @@ return Application::configure(basePath: dirname(__DIR__))
             'check.user.active' => \App\Http\Middleware\CheckUserActiveStatus::class,
             'check.boutique.active' => \App\Http\Middleware\EnsureBoutiqueIsActive::class,
             'role' => \App\Http\Middleware\CheckRole::class,
+            'detect.nature' => \App\Http\Middleware\DetectShopNature::class,
+        ]);
+        
+        $middleware->appendToGroup('api', [
+            \App\Http\Middleware\DetectShopNature::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

@@ -12,10 +12,18 @@ class Expense extends Model
     protected $fillable = [
         'type',
         'montant',
+        'mode_paiement',
+        'reference_piece',
+        'beneficiaire',
         'description',
         'date',
         'boutique_id',
         'user_id'
+    ];
+
+    protected $casts = [
+        'montant' => 'float',
+        'date' => 'date'
     ];
 
     public function boutique()

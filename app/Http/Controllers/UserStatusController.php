@@ -28,7 +28,12 @@ class UserStatusController extends Controller
         // Check if user has a boutique and if it's active
         if ($user->boutique_id) {
             $boutique = Boutique::find($user->boutique_id);
-            $boutiqueActive = $boutique ? $boutique->is_active : false;
+            if ($boutique) {
+                $root = $boutique->getRootBoutique();
+                $boutiqueActive = (bool) ($root->is_active && !$root->isLicenceExpired());
+            } else {
+                $boutiqueActive = false;
+            }
         }
 
         return response()->json([
@@ -72,10 +77,17 @@ class UserStatusController extends Controller
             ], 404);
         }
 
+        $root = $boutique->getRootBoutique();
+        $isRootActive = (bool) ($root->is_active && !$root->isLicenceExpired());
+
         return response()->json([
             'boutique_id' => $boutique->id,
             'boutique_nom' => $boutique->nom,
-            'is_active' => $boutique->is_active,
+            'is_active' => $isRootActive,
+            'is_licence_expired' => $root->isLicenceExpired(),
+            'parent_id' => $boutique->parent_id,
+            'root_boutique_id' => $root->id,
+            'is_filiale' => $boutique->isFiliale(),
             'message' => 'Statut de la boutique vérifié avec succès.'
         ], 200);
     }

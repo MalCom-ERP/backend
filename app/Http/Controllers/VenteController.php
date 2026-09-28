@@ -200,6 +200,9 @@ class VenteController extends Controller
                 }
                 $vente->montant_total = 0;
                 $vente->remise = 0;
+
+                // SYSCOHADA : Contre-passation de la vente totalement retournée / annulée
+                app(\App\Services\ComptaService::class)->enregistrerAnnulationVente($vente);
             } else {
                 if ($vente->type_paiement == 'credit') {
                     $ancienNet = $vente->montant_total;
@@ -369,6 +372,9 @@ class VenteController extends Controller
             $vente->statut = 'annulee';
             $vente->save();
 
+            // SYSCOHADA : Contre-passation de la vente annulée
+            app(\App\Services\ComptaService::class)->enregistrerAnnulationVente($vente);
+
             DB::commit();
             return response()->json(["message" => "Vente Annulée avec succès"], 200);
         } catch (\Exception $e) {
@@ -415,46 +421,83 @@ class VenteController extends Controller
         return response()->json($ventes, 200);
     }
 
-    public function chiffre()
+    public function chiffre(Request $request)
     {
         $boutique_id = $this->getBoutiqueId();
-        $currentYear = now()->year;
 
-        // 1. Annual Summary (Simple CA from Ventes table for the list)
-        $parAnnee = Vente::where('boutique_id', $boutique_id)
+        // 1. All created years for this boutique from Annees table
+        $anneesBoutique = \App\Models\Annee::where(function ($q) use ($boutique_id) {
+            $q->whereNull('boutique_id')->orWhere('boutique_id', $boutique_id);
+        })->orderBy('annee', 'desc')->get();
+
+        // 2. Any additional years with recorded sales
+        $anneesVentes = Vente::where('boutique_id', $boutique_id)
             ->whereIn('statut', ['validee', 'payee', 'credit'])
             ->selectRaw("YEAR(date_vente) as annee, SUM(montant_total) as ca")
             ->groupByRaw("YEAR(date_vente)")
-            ->orderByRaw("YEAR(date_vente) DESC")
-            ->get();
+            ->get()
+            ->keyBy('annee');
 
-        // 2. Monthly Detail (More precise, including returns and costs)
-        // We calculate this from Inventaire to be consistent with the audit page
-        // We filter out inventory entries linked to cancelled sales
-        $mouvements = Inventaire::with(['produit.stock', 'vente'])
+        // Combined distinct years
+        $allYears = $anneesBoutique->pluck('annee')->merge($anneesVentes->keys())->unique()->sortDesc()->values();
+        if ($allYears->isEmpty()) {
+            $allYears = collect([now()->year]);
+        }
+
+        $parAnnee = [];
+        foreach ($allYears as $y) {
+            $anneeModel = $anneesBoutique->first(function($item) use ($y) {
+                return (int)$item->annee === (int)$y;
+            });
+            $venteModel = $anneesVentes->get((int)$y);
+            $parAnnee[] = [
+                'annee' => (int)$y,
+                'ca' => $venteModel ? (float)$venteModel->ca : 0,
+                'is_active' => $anneeModel ? (bool)$anneeModel->is_active : false,
+            ];
+        }
+
+        // Active / target year
+        $activeYearModel = $anneesBoutique->firstWhere('is_active', true);
+        $defaultYear = $activeYearModel ? (int)$activeYearModel->annee : (int)$allYears->first();
+        $targetYear = $request->has('annee') && $request->annee ? (int)$request->annee : $defaultYear;
+
+        // Date and Month filtering
+        $dateDebut = $request->query('date_debut');
+        $dateFin = $request->query('date_fin');
+        $mois = $request->query('mois');
+
+        // Calculate movements
+        $movQuery = Inventaire::with(['produit.stock', 'vente'])
             ->where('boutique_id', $boutique_id)
-            ->whereYear('date', $currentYear)
             ->whereNotNull('vente_id')
             ->whereHas('vente', function($q) {
                 $q->whereIn('statut', ['validee', 'payee', 'credit']);
-            })
-            ->get();
+            });
+
+        if ($dateDebut && $dateFin) {
+            $movQuery->whereBetween('date', [$dateDebut, $dateFin]);
+        } elseif ($mois) {
+            $movQuery->whereYear('date', $targetYear)->whereMonth('date', (int)$mois);
+        } else {
+            $movQuery->whereYear('date', $targetYear);
+        }
+
+        $mouvements = $movQuery->get();
 
         $statsMensuelles = [];
-        // Initialize 12 months
         for ($i = 1; $i <= 12; $i++) {
             $statsMensuelles[$i] = [
                 'mois_num' => $i,
                 'ca' => 0,
                 'qtv' => 0,
                 'cout_achat' => 0,
-                'remises_traitees' => [] // To track global remise per vente_id
+                'remises_traitees' => []
             ];
         }
 
         foreach ($mouvements as $mov) {
-            $m = \Carbon\Carbon::parse($mov->date)->month;
-
+            $m = (int)\Carbon\Carbon::parse($mov->date)->month;
             $pxA = $mov->prix_achat ?? ($mov->produit->stock->prix_achat ?? 0);
             $pxV = $mov->prix_vente ?? ($mov->produit->stock->prix_vente ?? 0);
             
@@ -463,49 +506,84 @@ class VenteController extends Controller
                 $statsMensuelles[$m]['qtv'] += $mov->quantite;
                 $statsMensuelles[$m]['cout_achat'] += ($mov->quantite * $pxA);
             } else {
-                // It's a return (ajout linked to vente_id)
                 $statsMensuelles[$m]['ca'] -= ($mov->quantite * $pxV);
                 $statsMensuelles[$m]['qtv'] -= $mov->quantite;
                 $statsMensuelles[$m]['cout_achat'] -= ($mov->quantite * $pxA);
             }
         }
 
-        // Calculate global remises per month from the Vente table for consistency
-        $ventesAvecRemise = Vente::where('boutique_id', $boutique_id)
-            ->whereYear('date_vente', $currentYear)
+        // Remises query with matching date scope
+        $ventesAvecRemiseQuery = Vente::where('boutique_id', $boutique_id)
             ->where('remise', '>', 0)
-            ->whereIn('statut', ['validee', 'payee', 'credit'])
-            ->get();
+            ->whereIn('statut', ['validee', 'payee', 'credit']);
+
+        if ($dateDebut && $dateFin) {
+            $ventesAvecRemiseQuery->whereBetween('date_vente', [$dateDebut, $dateFin]);
+        } elseif ($mois) {
+            $ventesAvecRemiseQuery->whereYear('date_vente', $targetYear)->whereMonth('date_vente', (int)$mois);
+        } else {
+            $ventesAvecRemiseQuery->whereYear('date_vente', $targetYear);
+        }
+
+        $ventesAvecRemise = $ventesAvecRemiseQuery->get();
 
         foreach ($ventesAvecRemise as $v) {
-            $m = \Carbon\Carbon::parse($v->date_vente)->month;
+            $m = (int)\Carbon\Carbon::parse($v->date_vente)->month;
             $statsMensuelles[$m]['ca'] -= (float)$v->remise;
         }
 
-        // Convert to numerical array and sort desc by month
-        $parMois = array_values($statsMensuelles);
-        usort($parMois, function($a, $b) {
-            return $b['mois_num'] - $a['mois_num'];
-        });
+        $moisGlobal = array_values($statsMensuelles);
 
-        // 3. Global Stats for the current year
+        if ($mois) {
+            $mInt = (int)$mois;
+            $tableMois = isset($statsMensuelles[$mInt]) ? [$statsMensuelles[$mInt]] : [];
+        } elseif ($dateDebut && $dateFin) {
+            $startM = (int)\Carbon\Carbon::parse($dateDebut)->month;
+            $endM = (int)\Carbon\Carbon::parse($dateFin)->month;
+            $tableMois = [];
+            for ($i = min($startM, $endM); $i <= max($startM, $endM); $i++) {
+                if (isset($statsMensuelles[$i])) {
+                    $tableMois[] = $statsMensuelles[$i];
+                }
+            }
+            usort($tableMois, function($a, $b) {
+                return $b['mois_num'] - $a['mois_num'];
+            });
+        } else {
+            $tableMois = array_values($statsMensuelles);
+            usort($tableMois, function($a, $b) {
+                return $b['mois_num'] - $a['mois_num'];
+            });
+        }
+
         $globalStats = [
             'total_ca' => 0,
             'total_qtv' => 0,
-            'total_benefice' => 0
+            'total_benefice' => 0,
+            'total_cout_achat' => 0,
+            'taux_marge' => 0
         ];
 
-        foreach ($parMois as $m) {
+        foreach ($tableMois as $m) {
             $globalStats['total_ca'] += $m['ca'];
             $globalStats['total_qtv'] += $m['qtv'];
+            $globalStats['total_cout_achat'] += $m['cout_achat'];
             $globalStats['total_benefice'] += ($m['ca'] - $m['cout_achat']);
+        }
+
+        if ($globalStats['total_ca'] > 0) {
+            $globalStats['taux_marge'] = round(($globalStats['total_benefice'] / $globalStats['total_ca']) * 100, 1);
         }
 
         return response()->json([
             'par_annee' => $parAnnee,
-            'par_mois' => $parMois,
+            'par_mois' => $tableMois,
+            'mois_global' => $moisGlobal,
             'annual_stats' => $globalStats,
-            'annee_actuelle' => $currentYear
+            'annee_actuelle' => $targetYear,
+            'date_debut' => $dateDebut,
+            'date_fin' => $dateFin,
+            'mois_selectionne' => $mois ? (int)$mois : null
         ], 200);
     }
 
@@ -533,20 +611,31 @@ class VenteController extends Controller
         return response()->json($annee, 200);
     }
 
-    public function getVenteByAnnee($annee)
+    public function getVenteByAnnee(Request $request, $annee)
     {
         $boutique_id = $this->getBoutiqueId();
+        $targetYear = (int)$annee;
 
-        // Use Inventaire to calculate net stats for the specific year
-        // We filter out inventory entries linked to cancelled sales
-        $mouvements = Inventaire::with(['produit.stock', 'vente'])
+        $dateDebut = $request->query('date_debut');
+        $dateFin = $request->query('date_fin');
+        $mois = $request->query('mois');
+
+        $movQuery = Inventaire::with(['produit.stock', 'vente'])
             ->where('boutique_id', $boutique_id)
-            ->whereYear('date', $annee)
             ->whereNotNull('vente_id')
             ->whereHas('vente', function($q) {
                 $q->whereIn('statut', ['validee', 'payee', 'credit']);
-            })
-            ->get();
+            });
+
+        if ($dateDebut && $dateFin) {
+            $movQuery->whereBetween('date', [$dateDebut, $dateFin]);
+        } elseif ($mois) {
+            $movQuery->whereYear('date', $targetYear)->whereMonth('date', (int)$mois);
+        } else {
+            $movQuery->whereYear('date', $targetYear);
+        }
+
+        $mouvements = $movQuery->get();
 
         $statsMensuelles = [];
         for ($i = 1; $i <= 12; $i++) {
@@ -560,7 +649,7 @@ class VenteController extends Controller
         }
 
         foreach ($mouvements as $mov) {
-            $m = (int)Carbon::parse($mov->date)->month;
+            $m = (int)\Carbon\Carbon::parse($mov->date)->month;
             $pxA = $mov->prix_achat ?? ($mov->produit->stock->prix_achat ?? 0);
             $pxV = $mov->prix_vente ?? ($mov->produit->stock->prix_vente ?? 0);
             
@@ -569,45 +658,113 @@ class VenteController extends Controller
                 $statsMensuelles[$m]['qtv'] += $mov->quantite;
                 $statsMensuelles[$m]['cout_achat'] += ($mov->quantite * $pxA);
             } else {
-                // It's a return (ajout linked to vente_id)
                 $statsMensuelles[$m]['ca'] -= ($mov->quantite * $pxV);
                 $statsMensuelles[$m]['qtv'] -= $mov->quantite;
                 $statsMensuelles[$m]['cout_achat'] -= ($mov->quantite * $pxA);
             }
         }
 
-        $ventesAvecRemise = Vente::where('boutique_id', $boutique_id)
-            ->whereYear('date_vente', $annee)
+        $ventesAvecRemiseQuery = Vente::where('boutique_id', $boutique_id)
             ->where('remise', '>', 0)
-            ->whereIn('statut', ['validee', 'payee', 'credit'])
-            ->get();
+            ->whereIn('statut', ['validee', 'payee', 'credit']);
+
+        if ($dateDebut && $dateFin) {
+            $ventesAvecRemiseQuery->whereBetween('date_vente', [$dateDebut, $dateFin]);
+        } elseif ($mois) {
+            $ventesAvecRemiseQuery->whereYear('date_vente', $targetYear)->whereMonth('date_vente', (int)$mois);
+        } else {
+            $ventesAvecRemiseQuery->whereYear('date_vente', $targetYear);
+        }
+
+        $ventesAvecRemise = $ventesAvecRemiseQuery->get();
 
         foreach ($ventesAvecRemise as $v) {
-            $m = (int)Carbon::parse($v->date_vente)->month;
+            $m = (int)\Carbon\Carbon::parse($v->date_vente)->month;
             $statsMensuelles[$m]['ca'] -= (float)$v->remise;
         }
 
-        $venteList = array_values($statsMensuelles);
-        usort($venteList, function($a, $b) {
-            return $b['mois_num'] - $a['mois_num'];
-        });
+        $moisGlobal = array_values($statsMensuelles);
 
-        // Calculate global stats for this year
+        if ($mois) {
+            $mInt = (int)$mois;
+            $venteList = isset($statsMensuelles[$mInt]) ? [$statsMensuelles[$mInt]] : [];
+        } elseif ($dateDebut && $dateFin) {
+            $startM = (int)\Carbon\Carbon::parse($dateDebut)->month;
+            $endM = (int)\Carbon\Carbon::parse($dateFin)->month;
+            $venteList = [];
+            for ($i = min($startM, $endM); $i <= max($startM, $endM); $i++) {
+                if (isset($statsMensuelles[$i])) {
+                    $venteList[] = $statsMensuelles[$i];
+                }
+            }
+            usort($venteList, function($a, $b) {
+                return $b['mois_num'] - $a['mois_num'];
+            });
+        } else {
+            $venteList = array_values($statsMensuelles);
+            usort($venteList, function($a, $b) {
+                return $b['mois_num'] - $a['mois_num'];
+            });
+        }
+
         $annualStats = [
             'total_ca' => 0,
             'total_qtv' => 0,
-            'total_benefice' => 0
+            'total_benefice' => 0,
+            'total_cout_achat' => 0,
+            'taux_marge' => 0
         ];
 
         foreach ($venteList as $m) {
             $annualStats['total_ca'] += $m['ca'];
             $annualStats['total_qtv'] += $m['qtv'];
+            $annualStats['total_cout_achat'] += $m['cout_achat'];
             $annualStats['total_benefice'] += ($m['ca'] - $m['cout_achat']);
         }
 
+        if ($annualStats['total_ca'] > 0) {
+            $annualStats['taux_marge'] = round(($annualStats['total_benefice'] / $annualStats['total_ca']) * 100, 1);
+        }
+
+        // Years list
+        $anneesBoutique = \App\Models\Annee::where(function ($q) use ($boutique_id) {
+            $q->whereNull('boutique_id')->orWhere('boutique_id', $boutique_id);
+        })->orderBy('annee', 'desc')->get();
+
+        $anneesVentes = Vente::where('boutique_id', $boutique_id)
+            ->whereIn('statut', ['validee', 'payee', 'credit'])
+            ->selectRaw("YEAR(date_vente) as annee, SUM(montant_total) as ca")
+            ->groupByRaw("YEAR(date_vente)")
+            ->get()
+            ->keyBy('annee');
+
+        $allYears = $anneesBoutique->pluck('annee')->merge($anneesVentes->keys())->unique()->sortDesc()->values();
+        if ($allYears->isEmpty()) {
+            $allYears = collect([now()->year]);
+        }
+
+        $parAnnee = [];
+        foreach ($allYears as $y) {
+            $anneeModel = $anneesBoutique->first(function($item) use ($y) {
+                return (int)$item->annee === (int)$y;
+            });
+            $venteModel = $anneesVentes->get((int)$y);
+            $parAnnee[] = [
+                'annee' => (int)$y,
+                'ca' => $venteModel ? (float)$venteModel->ca : 0,
+                'is_active' => $anneeModel ? (bool)$anneeModel->is_active : false,
+            ];
+        }
+
         return response()->json([
+            'par_annee' => $parAnnee,
             'par_mois' => $venteList,
-            'annual_stats' => $annualStats
+            'mois_global' => $moisGlobal,
+            'annual_stats' => $annualStats,
+            'annee_actuelle' => $targetYear,
+            'date_debut' => $dateDebut,
+            'date_fin' => $dateFin,
+            'mois_selectionne' => $mois ? (int)$mois : null
         ], 200);
     }
 
@@ -747,12 +904,20 @@ class VenteController extends Controller
 
         $client_id = 1;
         if ($request->client_nom) {
-            $client_nom = strtoupper($request->client_nom);
-            $client = Client::where('telephone', $request->client_numero)->first();
+            $client_nom = strtoupper(trim($request->client_nom));
+            $client_numero = !empty($request->client_numero) ? trim($request->client_numero) : null;
+
+            $client = null;
+            if ($client_numero) {
+                $client = Client::where('telephone', $client_numero)->first();
+            }
+            if (!$client) {
+                $client = Client::where('nom', $client_nom)->where('telephone', $client_numero)->first();
+            }
             if (!$client) {
                 $client = Client::create([
                     'nom' => $client_nom,
-                    'telephone' => $request->client_numero
+                    'telephone' => $client_numero
                 ]);
             }
             $client_id = $client->id;
@@ -766,22 +931,28 @@ class VenteController extends Controller
             $vente->client_id = $client_id;
             $vente->boutique_id = $boutique_id;
             $vente->user_id = $user->id;
-            $vente->montant_total = $request->montant_total;
-            $vente->type_paiement = $is_proforma ? 'proforma' : ($request->type_paiement ?? 'contant');
+            $rawType = $is_proforma ? 'proforma' : ($request->type_paiement ?? 'contant');
+            $vente->type_paiement = $rawType;
+            $vente->moyen_paiement = $request->input('moyen_paiement', ($rawType === 'credit' ? 'credit' : ($rawType === 'proforma' ? 'proforma' : $rawType)));
+            $vente->montant_recu = $request->input('montant_recu', 0);
+            $vente->monnaie_rendue = $request->input('monnaie_rendue', 0);
             $vente->montant_avance = $request->montant_avance ?? 0;
+
+            $vente->montant_total = $request->montant_total;
 
             if ($is_proforma) {
                 $vente->statut = 'proforma';
+                $vente->remise = $request->remise ?? 0;
                 $vente->montant_restant = $request->montant_total;
             } else {
                 $vente->remise = $request->remise ?? 0;
-                $vente->statut = ($vente->type_paiement === 'credit') ? 'credit' : 'payee';
-                $vente->montant_restant = ($vente->type_paiement === 'credit')
+                $vente->statut = ($rawType === 'credit') ? 'credit' : 'payee';
+                $vente->montant_restant = ($rawType === 'credit')
                     ? ($request->montant_total - $vente->montant_avance)
                     : 0;
-            }
+            } 
 
-            $vente->date_vente = $request->date ?? now()->format('Y-m-d');
+            $vente->date_vente = $request->input('date', now()->format('Y-m-d'));
             $vente->save();
 
             $sumLineRemises = 0;
@@ -876,6 +1047,9 @@ class VenteController extends Controller
                     'facture_id' => $facture->id,
                     'vente_id' => $vente->id
                 ]);
+
+                // Génération de l'écriture comptable automatique SYSCOHADA
+                app(\App\Services\ComptaService::class)->enregistrerVente($vente);
             }
 
             DB::commit();
@@ -888,6 +1062,157 @@ class VenteController extends Controller
             DB::rollBack();
             return response()->json(['message' => $e->getMessage()], 400);
         }
+    }
+
+    /**
+     * Synchronisation par lot des ventes créées en mode hors-ligne (Offline-First)
+     */
+    public function syncOffline(Request $request)
+    {
+        $request->validate([
+            'ventes' => 'required|array|min:1',
+        ]);
+
+        $user = Auth::user();
+        $boutique_id = $this->getBoutiqueId();
+
+        if (!$boutique_id) {
+            return response()->json(['message' => 'Boutique non identifiée.'], 400);
+        }
+
+        $synced = [];
+        $errors = [];
+
+        foreach ($request->ventes as $vData) {
+            $offlineId = $vData['offline_id'] ?? null;
+            try {
+                // Créer une sous-requête avec les données de la vente
+                $subRequest = new Request($vData);
+                $subRequest->setUserResolver(fn() => $user);
+
+                // Traiter chaque vente dans une transaction individuelle
+                DB::beginTransaction();
+
+                $client_id = 1;
+                if (!empty($vData['client_nom'])) {
+                    $cNom = strtoupper(trim($vData['client_nom']));
+                    $cNum = !empty($vData['client_numero']) ? trim($vData['client_numero']) : null;
+                    $client = null;
+                    if ($cNum) {
+                        $client = Client::where('telephone', $cNum)->first();
+                    }
+                    if (!$client) {
+                        $client = Client::where('nom', $cNom)->first();
+                    }
+                    if (!$client) {
+                        $client = Client::create([
+                            'nom' => $cNom,
+                            'telephone' => $cNum,
+                        ]);
+                    }
+                    $client_id = $client->id;
+                }
+
+                $typePaiement = $vData['type_paiement'] ?? 'contant';
+                $vente = new Vente();
+                $vente->client_id = $client_id;
+                $vente->boutique_id = $boutique_id;
+                $vente->user_id = $user->id;
+                $vente->montant_total = $vData['montant_total'];
+                $vente->type_paiement = $typePaiement;
+                $vente->moyen_paiement = $vData['moyen_paiement'] ?? ($typePaiement === 'credit' ? 'credit' : $typePaiement);
+                $vente->montant_recu = $vData['montant_recu'] ?? 0;
+                $vente->monnaie_rendue = $vData['monnaie_rendue'] ?? 0;
+                $vente->montant_avance = $vData['montant_avance'] ?? 0;
+                $vente->remise = $vData['remise'] ?? 0;
+                $vente->statut = ($typePaiement === 'credit') ? 'credit' : 'payee';
+                $vente->montant_restant = ($typePaiement === 'credit')
+                    ? ($vData['montant_total'] - $vente->montant_avance)
+                    : 0;
+                $vente->date_vente = !empty($vData['date']) ? $vData['date'] : now()->format('Y-m-d');
+                $vente->save();
+
+                foreach ($vData['produits'] as $item) {
+                    $pId = $item['produits']['id'] ?? ($item['id'] ?? 0);
+                    $pNom = $item['produits']['nom'] ?? ($item['nom'] ?? "Produit #$pId");
+
+                    $stock = Stock::where('produit_id', $pId)
+                        ->where('boutique_id', $boutique_id)
+                        ->first();
+
+                    if ($stock) {
+                        $stock->quantite = max(0, $stock->quantite - $item['quantite']);
+                        $stock->save();
+                    }
+
+                    $prixU = $item['prix_vendu'] ?? ($item['prix'] ?? ($stock->prix_vente ?? 0));
+                    $remiseLine = ($item['remise_unitaire'] ?? 0) * $item['quantite'];
+
+                    $detail = new DetailVente();
+                    $detail->vente_id = $vente->id;
+                    $detail->produit_id = $pId;
+                    $detail->quantite = $item['quantite'];
+                    $detail->prix_unitaire = $prixU;
+                    $detail->montant = $prixU * $item['quantite'];
+                    $detail->remise = $remiseLine;
+                    $detail->montant_total = $detail->montant;
+                    $detail->montant_paye = $detail->montant - $remiseLine;
+                    $detail->quantite_restante = $item['quantite'];
+                    $detail->save();
+
+                    Inventaire::create([
+                        'produit_id' => $pId,
+                        'boutique_id' => $boutique_id,
+                        'user_id' => $user->id,
+                        'vente_id' => $vente->id,
+                        'quantite' => $item['quantite'],
+                        'type' => 'retrait',
+                        'prix_achat' => $stock ? $stock->prix_achat : 0,
+                        'prix_vente' => $prixU,
+                        'remise' => $remiseLine,
+                        'description' => "Vente hors-ligne synchronisée #" . $vente->id,
+                        'date' => $vente->date_vente,
+                    ]);
+                }
+
+                $facture = Facture::create([
+                    'client_id' => $client_id,
+                    'boutique_id' => $boutique_id,
+                    'montant_total' => $vente->montant_total,
+                    'date_facturation' => $vente->date_vente,
+                    'statut' => ($vente->type_paiement === 'credit' ? 'en attente' : 'payée'),
+                    'description' => 'Facture Vente Synchronisée #' . $vente->id,
+                ]);
+
+                FactureVente::create([
+                    'facture_id' => $facture->id,
+                    'vente_id' => $vente->id,
+                ]);
+
+                // Écriture comptable SYSCOHADA
+                app(\App\Services\ComptaService::class)->enregistrerVente($vente);
+
+                DB::commit();
+
+                $synced[] = [
+                    'offline_id' => $offlineId,
+                    'server_id' => $vente->id,
+                    'facture_id' => $facture->id,
+                ];
+            } catch (\Exception $e) {
+                DB::rollBack();
+                $errors[] = [
+                    'offline_id' => $offlineId,
+                    'error' => $e->getMessage(),
+                ];
+            }
+        }
+
+        return response()->json([
+            'message' => count($synced) . ' vente(s) synchronisée(s) avec succès.',
+            'synced' => $synced,
+            'errors' => $errors,
+        ], 200);
     }
 
     public function convertProformaToSale(Request $request, $id)
@@ -958,11 +1283,15 @@ class VenteController extends Controller
             }
 
             // 2. Update Vente Identity
-            $vente->type_paiement = $type_paiement;
+            $rawType = $request->input('type_paiement', 'contant');
+            $vente->type_paiement = $rawType;
+            $vente->moyen_paiement = $request->input('moyen_paiement', $rawType);
+            $vente->montant_recu = $request->input('montant_recu', 0);
+            $vente->monnaie_rendue = $request->input('monnaie_rendue', 0);
             $vente->remise = $vente->detailVentes->sum('remise');
             $vente->montant_avance = $montant_avance;
-            $vente->statut = ($type_paiement === 'credit') ? 'credit' : 'payee';
-            $vente->montant_restant = ($type_paiement === 'credit')
+            $vente->statut = ($rawType === 'credit') ? 'credit' : 'payee';
+            $vente->montant_restant = ($rawType === 'credit')
                 ? ($vente->montant_total - $montant_avance)
                 : 0;
             $vente->date_vente = now()->format('Y-m-d');
@@ -982,6 +1311,9 @@ class VenteController extends Controller
                 'facture_id' => $facture->id,
                 'vente_id' => $vente->id
             ]);
+
+            // Génération de l'écriture comptable automatique SYSCOHADA (car c'est maintenant une vraie vente)
+            app(\App\Services\ComptaService::class)->enregistrerVente($vente);
 
             DB::commit();
             return response()->json([

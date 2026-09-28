@@ -41,11 +41,23 @@ class AuthController extends Controller
         }
 
         if (!$user->is_active) {
-            // Optional: Log or handle inactive users differently if needed, 
-            // but here we allow them to proceed as per request.
+            return response()->json([
+                'error' => 'Votre compte est en etat désactivé, veillez contacter votre admin.'
+            ], 401);
+        }
+
+        // Vérification de l'abonnement / licence de la boutique
+        if ($user->boutique_id) {
+            $boutique = \App\Models\Boutique::find($user->boutique_id);
+            if ($boutique && $boutique->isLicenceExpired()) {
                 return response()->json([
-                    'error' => 'Votre compte est en etat désactivé, veillez contacter votre admin.'
-                ], 401);
+                    'error' => 'licence_expired',
+                    'message' => "La licence de votre boutique « {$boutique->nom} » a expiré. Veuillez saisir votre nouvelle clé d'activation.",
+                    'boutique_id' => $boutique->id,
+                    'boutique_nom' => $boutique->nom,
+                    'date_expiration' => $boutique->date_expiration_licence
+                ], 403);
+            }
         }
 
         $token = $user->createToken('auth_token')->plainTextToken;
@@ -53,7 +65,11 @@ class AuthController extends Controller
         return response()->json([
             'user' => $user,
             'user_role' => $user->role,
-            'boutique_id' => $user->boutique_id,
+            'boutique_id' => $user->boutique_id ?: (\App\Models\Boutique::first()?->id),
+            'date_expiration' => $boutique?->date_expiration_licence,
+            'date_expiration_formatee' => $boutique?->date_expiration_licence ? \Carbon\Carbon::parse($boutique->date_expiration_licence)->format('d/m/Y') : null,
+            'is_unlimited' => $boutique?->hasUnlimitedLicence() ?? false,
+            'jours_restants' => $boutique?->joursRestants(),
             'access_token' => $token
         ], 201);
     }

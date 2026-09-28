@@ -16,16 +16,41 @@ class BoutiqueController extends Controller
     public function allStats()
     {
         $user = Auth::user();
-        $boutiques = Boutique::where('user_id', $user->id)->get();
+        if (in_array($user->role, ['admin', 'admin1'])) {
+            $boutiques = Boutique::with('nature')
+                ->where(function ($q) use ($user) {
+                    $q->where('user_id', $user->id)
+                      ->orWhere('id', $user->boutique_id);
+                })->get();
+            if ($boutiques->isEmpty()) {
+                $boutiques = Boutique::with('nature')->get();
+            }
+        } else {
+            $boutiques = Boutique::with('nature')
+                ->where('id', $user->boutique_id)
+                ->get();
+        }
+
         $reports = [];
 
         foreach ($boutiques as $b) {
+            $salesQuery = \App\Models\Vente::where('boutique_id', $b->id)
+                ->whereIn('statut', ['validee', 'payee', 'credit', 'terminee']);
+            $revenue = (float)$salesQuery->sum('montant_total');
+            $salesCount = $salesQuery->count();
+            $usersCount = \App\Models\User::where('boutique_id', $b->id)->count();
+
             $reports[] = [
                 'id' => $b->id,
                 'nom' => $b->nom,
-                'revenue' => \App\Models\Vente::where('boutique_id', $b->id)->whereIn('statut', ['validee', 'payee', 'credit'])->sum('montant_total'),
-                'sales_count' => \App\Models\Vente::where('boutique_id', $b->id)->whereIn('statut', ['validee', 'payee', 'credit'])->count(),
-                'users_count' => \App\Models\User::where('boutique_id', $b->id)->count(),
+                'nature' => $b->nature ? [
+                    'id' => $b->nature->id,
+                    'name' => $b->nature->name,
+                    'slug' => $b->nature->slug
+                ] : null,
+                'revenue' => $revenue,
+                'sales_count' => $salesCount,
+                'users_count' => $usersCount,
                 'is_active' => $b->is_active
             ];
         }
@@ -35,10 +60,10 @@ class BoutiqueController extends Controller
 
     public function stats(string $id)
     {
-        $boutique = Boutique::findOrFail($id);
+        $boutique = Boutique::with('nature')->findOrFail($id);
 
-        $salesCount = Vente::where('boutique_id', $id)->whereIn('statut', ['validee', 'payee', 'credit'])->count();
-        $totalRevenue = Vente::where('boutique_id', $id)->whereIn('statut', ['validee', 'payee', 'credit'])->sum('montant_total');
+        $salesCount = Vente::where('boutique_id', $id)->whereIn('statut', ['validee', 'payee', 'credit', 'terminee'])->count();
+        $totalRevenue = (float)Vente::where('boutique_id', $id)->whereIn('statut', ['validee', 'payee', 'credit', 'terminee'])->sum('montant_total');
         $usersCount = User::where('boutique_id', $id)->count();
 
         $topProducts = DetailVente::with('produit')
@@ -68,15 +93,19 @@ class BoutiqueController extends Controller
     public function index()
     {
         $user = Auth::user();
-        // if ($user->role === 'admin') {
-        //     // Un admin voit toutes les boutiques qu'il a créées ou toutes les boutiques s'il est super-admin
-        //     // Pour l'instant, on retourne tout s'il est admin
-        //     return response()->json(Boutique::all(), 200);
-        // }
+        if (in_array($user->role, ['admin', 'admin1'])) {
+            $boutiques = Boutique::with('nature')
+                ->where(function ($q) use ($user) {
+                    $q->where('user_id', $user->id)
+                      ->orWhere('id', $user->boutique_id);
+                })->get();
+            if ($boutiques->isEmpty()) {
+                $boutiques = Boutique::with('nature')->get();
+            }
+            return response()->json($boutiques, 200);
+        }
 
-        // Pour les autres roles, peut-être filtrer ?
-        // Mais selon la demande, l'admin doit pouvoir switcher.
-        return response()->json(Boutique::where('user_id', $user->id)->get(), 200);
+        return response()->json(Boutique::with('nature')->where('id', $user->boutique_id)->get(), 200);
     }
 
     /**
@@ -102,6 +131,7 @@ class BoutiqueController extends Controller
                 'couleur_secondaire' => 'nullable|string',
                 'devise' => 'nullable|string',
                 'format_facture' => 'nullable|string',
+                'nature_id' => 'required|exists:natures,id',
             ]);
 
             $user = Auth::user();
@@ -114,11 +144,29 @@ class BoutiqueController extends Controller
             }
 
             $fields['user_id'] = $user->id;
-            $fields['is_active'] = true;
+
+            // Rattachement automatique comme filiale si l'admin possède déjà une boutique principale
+            $primaryBoutiqueId = $user->boutique_id ?: Boutique::where('user_id', $user->id)->whereNull('parent_id')->value('id');
+            if ($primaryBoutiqueId) {
+                $primaryBoutique = Boutique::find($primaryBoutiqueId);
+                if ($primaryBoutique) {
+                    $fields['parent_id'] = $primaryBoutique->id;
+                    $fields['is_active'] = $primaryBoutique->is_active;
+                    $fields['date_expiration_licence'] = $primaryBoutique->date_expiration_licence;
+                } else {
+                    $fields['is_active'] = true;
+                }
+            } else {
+                $fields['is_active'] = true;
+            }
 
             \Illuminate\Support\Facades\Log::info('Creating boutique with fields:', $fields);
 
             $boutique = Boutique::create($fields);
+
+            if (isset($primaryBoutique) && $primaryBoutique) {
+                $this->syncParentDataToNewFiliale($boutique, $primaryBoutique);
+            }
 
             return response()->json($boutique, 201);
         } catch (\Exception $e) {
@@ -156,6 +204,7 @@ class BoutiqueController extends Controller
                     'boutique.couleur_secondaire' => 'nullable|string',
                     'boutique.devise' => 'nullable|string',
                     'boutique.format_facture' => 'nullable|string',
+                    'boutique.nature_id' => 'required|exists:natures,id',
                     
                     'manager.name' => 'required|string',
                     'manager.email' => 'required|string|email|unique:users,email',
@@ -174,8 +223,27 @@ class BoutiqueController extends Controller
                 // 3. Create Boutique
                 $boutiqueFields = $request->input('boutique');
                 $boutiqueFields['user_id'] = $user->id; // The admin who created it
-                $boutiqueFields['is_active'] = true;
+
+                // Rattachement automatique comme filiale si l'admin possède déjà une boutique principale
+                $primaryBoutiqueId = $user->boutique_id ?: Boutique::where('user_id', $user->id)->whereNull('parent_id')->value('id');
+                if ($primaryBoutiqueId) {
+                    $primaryBoutique = Boutique::find($primaryBoutiqueId);
+                    if ($primaryBoutique) {
+                        $boutiqueFields['parent_id'] = $primaryBoutique->id;
+                        $boutiqueFields['is_active'] = $primaryBoutique->is_active;
+                        $boutiqueFields['date_expiration_licence'] = $primaryBoutique->date_expiration_licence;
+                    } else {
+                        $boutiqueFields['is_active'] = true;
+                    }
+                } else {
+                    $boutiqueFields['is_active'] = true;
+                }
+
                 $boutique = Boutique::create($boutiqueFields);
+
+                if (isset($primaryBoutique) && $primaryBoutique) {
+                    $this->syncParentDataToNewFiliale($boutique, $primaryBoutique);
+                }
 
                 // 3. Create Manager User
                 $managerFields = $request->input('manager');
@@ -207,7 +275,7 @@ class BoutiqueController extends Controller
      */
     public function show(string $id)
     {
-        return response()->json(Boutique::findOrFail($id), 200);
+        return response()->json(Boutique::with('nature')->findOrFail($id), 200);
     }
 
     /**
@@ -234,6 +302,7 @@ class BoutiqueController extends Controller
             'couleur_secondaire' => 'nullable|string',
             'devise' => 'nullable|string',
             'format_facture' => 'nullable|string',
+            'nature_id' => 'required|exists:natures,id',
         ]);
 
         $boutique->update($fields);
@@ -250,5 +319,41 @@ class BoutiqueController extends Controller
         $boutique->delete();
 
         return response()->json(['message' => 'Boutique supprimée'], 200);
+    }
+
+    /**
+     * Synchronise les années fiscales actives et les comptes comptables personnalisés
+     * depuis la boutique principale vers une nouvelle filiale.
+     */
+    protected function syncParentDataToNewFiliale(Boutique $filiale, Boutique $parent): void
+    {
+        try {
+            // 1. Synchroniser les années actives
+            $parentAnnees = \App\Models\Annee::where('boutique_id', $parent->id)->get();
+            foreach ($parentAnnees as $annee) {
+                \App\Models\Annee::firstOrCreate(
+                    ['annee' => $annee->annee, 'boutique_id' => $filiale->id],
+                    ['is_active' => $annee->is_active]
+                );
+            }
+
+            // 2. Synchroniser les comptes comptables personnalisés
+            $parentComptes = \App\Models\CompteComptable::where('boutique_id', $parent->id)->get();
+            foreach ($parentComptes as $compte) {
+                \App\Models\CompteComptable::firstOrCreate(
+                    ['numero' => $compte->numero, 'boutique_id' => $filiale->id],
+                    [
+                        'libelle' => $compte->libelle,
+                        'classe' => $compte->classe,
+                        'type' => $compte->type,
+                        'sens_normal' => $compte->sens_normal,
+                        'is_system' => false,
+                        'is_active' => $compte->is_active,
+                    ]
+                );
+            }
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::warning('Échec de synchronisation filiale depuis le parent: ' . $e->getMessage());
+        }
     }
 }

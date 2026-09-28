@@ -6,6 +6,7 @@ use App\Models\Stock;
 use App\Models\Produit;
 use App\Models\Inventaire;
 use App\Models\inventaires;
+use App\Models\Boutique;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
@@ -69,14 +70,25 @@ class ProduitController extends Controller
 
         foreach ($request->produits as $produit) {
             $produitId = $produit['produit_id'];
-            $quantite = $produit['quantite'];
-            $prix_achat = $produit['prix_achat'];
-            $prix_vente = $produit['prix_vente'];
-            $prod = $produit['produit'];
-            // $description = $produit['description'];
+            $quantite = isset($produit['quantite']) ? floatval($produit['quantite']) : 0;
+            if ($quantite <= 0) {
+                continue;
+            }
+
+            $prod = $produit['produit'] ?? '';
+
+            // Pour la mise a jour dans la table stock :
+            $stock = Stock::where('produit_id', $produitId)->where('boutique_id', $boutique_id)->first();
+
+            $prix_achat = (isset($produit['prix_achat']) && floatval($produit['prix_achat']) > 0)
+                ? floatval($produit['prix_achat'])
+                : ($stock ? floatval($stock->prix_achat) : 0);
+
+            $prix_vente = (isset($produit['prix_vente']) && floatval($produit['prix_vente']) > 0)
+                ? floatval($produit['prix_vente'])
+                : ($stock ? floatval($stock->prix_vente) : 0);
 
             // L'enregistrement dans la table Inventaire :
-
             Inventaire::create([
                 'produit_id' => $produitId,
                 'boutique_id' => $boutique_id,
@@ -90,8 +102,6 @@ class ProduitController extends Controller
                 'date' => now()->format('Y-m-d')
             ]);
 
-            // Pour la mise a jour dans la table stock :
-            $stock = Stock::where('produit_id', $produitId)->where('boutique_id', $boutique_id)->first();
             if ($stock) {
                 $stock->update([
                     'quantite' => $stock->quantite + $quantite,
@@ -112,6 +122,10 @@ class ProduitController extends Controller
                 ]);
             }
         }
+
+        // SYSCOHADA : Enregistrement comptable du réapprovisionnement (Achats de marchandises)
+        app(\App\Services\ComptaService::class)->enregistrerReappro($request->produits, $boutique_id, $user->id);
+
         return response()->json(['message' => 'Produit reapprovisionné avec succès'], 201);
     }
 
@@ -126,6 +140,182 @@ class ProduitController extends Controller
             })
             ->orderBy('id', 'desc')->get();
         return response()->json($produits, 200);
+    }
+
+    /**
+     * Recherche la disponibilité d'un produit dans toutes les autres filiales du groupe
+     * avec adresse, contact et stock pour faciliter la réorientation des clients.
+     */
+    public function disponibilitesFiliales($id)
+    {
+        $produit = Produit::withTrashed()->findOrFail($id);
+        $boutique_id = $this->getBoutiqueId();
+        $currentBoutique = $boutique_id ? Boutique::find($boutique_id) : null;
+
+        $currentStock = Stock::where('produit_id', $produit->id)
+            ->where('boutique_id', $boutique_id)
+            ->first();
+
+        if (!$currentBoutique) {
+            return response()->json([
+                'produit' => [
+                    'id' => $produit->id,
+                    'nom' => $produit->nom,
+                    'reference' => $produit->reference,
+                    'stock_actuel' => $currentStock ? (float)$currentStock->quantite : 0,
+                ],
+                'filiales' => [],
+                'total_filiales_disponibles' => 0,
+                'total_stock_filiales' => 0,
+            ], 200);
+        }
+
+        // Récupérer toutes les filiales et la boutique principale du groupe, hors boutique courante
+        $groupBoutiques = $currentBoutique->getGroupBoutiques()->where('id', '!=', $currentBoutique->id);
+
+        $filialesResultats = [];
+        $totalStock = 0;
+        $filialesDispos = 0;
+
+        foreach ($groupBoutiques as $b) {
+            // 1. Chercher le stock pour ce produit exact dans cette filiale
+            $stock = Stock::where('produit_id', $produit->id)
+                ->where('boutique_id', $b->id)
+                ->first();
+
+            // 2. Si pas trouvé directement par produit_id, chercher par référence ou nom identique
+            if (!$stock) {
+                $matchingProdIds = Produit::where('id', '!=', $produit->id)
+                    ->where(function ($q) use ($produit) {
+                        if (!empty($produit->reference)) {
+                            $q->where('reference', $produit->reference);
+                        }
+                        $q->orWhereRaw('LOWER(TRIM(nom)) = ?', [strtolower(trim($produit->nom))]);
+                    })
+                    ->pluck('id');
+
+                if ($matchingProdIds->isNotEmpty()) {
+                    $stock = Stock::whereIn('produit_id', $matchingProdIds)
+                        ->where('boutique_id', $b->id)
+                        ->first();
+                }
+            }
+
+            $qte = $stock ? (float)$stock->quantite : 0;
+            $enStock = $qte > 0;
+            if ($enStock) {
+                $filialesDispos++;
+                $totalStock += $qte;
+            }
+
+            $filialesResultats[] = [
+                'boutique_id' => $b->id,
+                'nom' => $b->nom,
+                'adresse' => $b->adresse ?: 'Adresse non renseignée',
+                'telephone' => $b->telephone ?: 'Non renseigné',
+                'email' => $b->email,
+                'is_parent' => is_null($b->parent_id),
+                'quantite' => $qte,
+                'prix_vente' => $stock && $stock->prix_vente > 0 ? (float)$stock->prix_vente : ($produit->prix_detail ?? 0),
+                'en_stock' => $enStock,
+                'statut' => $qte > 5 ? 'disponible' : ($qte > 0 ? 'faible' : 'rupture'),
+            ];
+        }
+
+        // Tri : filiales avec stock disponible en premier, puis quantité décroissante
+        usort($filialesResultats, function ($a, $b) {
+            if ($a['en_stock'] !== $b['en_stock']) {
+                return $a['en_stock'] ? -1 : 1;
+            }
+            return $b['quantite'] <=> $a['quantite'];
+        });
+
+        return response()->json([
+            'produit' => [
+                'id' => $produit->id,
+                'nom' => $produit->nom,
+                'reference' => $produit->reference,
+                'image' => $produit->image,
+                'stock_actuel' => $currentStock ? (float)$currentStock->quantite : 0,
+            ],
+            'current_boutique' => [
+                'id' => $currentBoutique->id,
+                'nom' => $currentBoutique->nom,
+                'adresse' => $currentBoutique->adresse,
+                'telephone' => $currentBoutique->telephone,
+            ],
+            'filiales' => $filialesResultats,
+            'total_filiales_disponibles' => $filialesDispos,
+            'total_stock_filiales' => $totalStock,
+        ], 200);
+    }
+
+    /**
+     * Recherche globale de stock inter-filiales pour administrateurs et gestionnaires.
+     */
+    public function searchStockInterFiliales(Request $request)
+    {
+        $query = $request->input('q', '');
+        $boutique_id = $this->getBoutiqueId();
+        $currentBoutique = $boutique_id ? Boutique::find($boutique_id) : null;
+
+        if (!$currentBoutique) {
+            return response()->json([], 200);
+        }
+
+        $groupBoutiqueIds = $currentBoutique->getGroupBoutiqueIds();
+        $boutiques = Boutique::whereIn('id', $groupBoutiqueIds)->get()->keyBy('id');
+
+        $produits = Produit::where(function ($q) use ($query) {
+            $q->where('nom', 'like', "%{$query}%")
+              ->orWhere('reference', 'like', "%{$query}%");
+        })
+        ->with(['stocks' => function ($q) use ($groupBoutiqueIds) {
+            $q->whereIn('boutique_id', $groupBoutiqueIds);
+        }, 'categorie'])
+        ->limit(30)
+        ->get();
+
+        $results = [];
+        foreach ($produits as $p) {
+            $stockCourant = $p->stocks->firstWhere('boutique_id', $currentBoutique->id);
+            $qteCourante = $stockCourant ? (float)$stockCourant->quantite : 0;
+
+            $dispos = [];
+            foreach ($groupBoutiqueIds as $gid) {
+                if ($gid == $currentBoutique->id) continue;
+                $b = $boutiques->get($gid);
+                if (!$b) continue;
+
+                $stk = $p->stocks->firstWhere('boutique_id', $gid);
+                $q = $stk ? (float)$stk->quantite : 0;
+                $dispos[] = [
+                    'boutique_id' => $b->id,
+                    'boutique_nom' => $b->nom,
+                    'adresse' => $b->adresse ?: 'Adresse non renseignée',
+                    'telephone' => $b->telephone ?: 'Non renseigné',
+                    'quantite' => $q,
+                    'prix_vente' => $stk ? (float)$stk->prix_vente : ($p->prix_detail ?? 0),
+                    'en_stock' => $q > 0,
+                ];
+            }
+
+            usort($dispos, fn($a, $b) => $b['quantite'] <=> $a['quantite']);
+
+            $results[] = [
+                'produit_id' => $p->id,
+                'nom' => $p->nom,
+                'reference' => $p->reference,
+                'image' => $p->image,
+                'stock_courant' => $qteCourante,
+                'is_rupture' => $qteCourante <= 0,
+                'filiales' => $dispos,
+                'total_stock_filiales' => array_sum(array_column($dispos, 'quantite')),
+                'filiales_avec_stock' => count(array_filter($dispos, fn($d) => $d['en_stock'])),
+            ];
+        }
+
+        return response()->json($results, 200);
     }
     public function stock()
     {
@@ -455,6 +645,7 @@ class ProduitController extends Controller
             'reference' => 'nullable|string',
             'date_achat' => 'nullable|date',
             'date_fin_garantie' => 'nullable|date',
+            'config' => 'nullable|string', // Expecting JSON string from FormData
         ]);
 
         $chemin = null;
@@ -474,6 +665,7 @@ class ProduitController extends Controller
             'image' => $imagePath,
             'prix_master' => $request->input('prix_master'),
             'prix_detail' => $request->input('prix_detail'),
+            'config' => json_decode($request->input('config'), true),
         ]);
 
         $produitId = $produit->id;
@@ -521,6 +713,7 @@ class ProduitController extends Controller
             'prix_detail' => 'nullable|numeric',
             'prix_master' => 'nullable|numeric',
             'quantite' => 'nullable|integer',
+            'config' => 'nullable|string',
             // Accepter aussi camelCase au cas où
             'prixVente' => 'nullable|numeric',
             'prixAchat' => 'nullable|numeric',
@@ -533,6 +726,7 @@ class ProduitController extends Controller
             'categorie_id' => $request->input('categorie_id', $produit->categorie_id),
             'prix_detail' => $request->input('prix_detail', $produit->prix_detail),
             'prix_master' => $request->input('prix_master', $produit->prix_master),
+            'config' => $request->has('config') ? json_decode($request->input('config'), true) : $produit->config,
         ];
 
         if ($request->hasFile('image')) {

@@ -1,221 +1,139 @@
 @extends('pdf.layouts.base')
 
-@section('title', 'Audit d\'Inventaire & Mouvements')
+@section('title', 'Rapport d\'Audit des Stocks & Mouvements')
+@section('orientation', 'landscape')
 
-@section('styles')
-    <style>
-        body {
-            font-family: 'Helvetica', Arial, sans-serif;
-            font-size: 8.5pt;
-            color: #000;
-        }
-
-        .excel-table {
-            width: 100%;
-            border-collapse: collapse;
-            table-layout: fixed;
-            margin-top: 15px;
-        }
-
-        .excel-table th,
-        .excel-table td {
-            border: 1px solid #000;
-            padding: 5px;
-            word-wrap: break-word;
-        }
-
-        .excel-table th {
-            background-color: #e0e0e0;
-            font-weight: bold;
-            text-transform: uppercase;
-            font-size: 7.5pt;
-        }
-
-        .header-section {
-            border: 2px solid #000;
-            padding: 10px;
-            margin-bottom: 15px;
-            background-color: #f9f9f9;
-        }
-
-        .zebra tr:nth-child(even) {
-            background-color: #f2f2f2;
-        }
-
-        .text-right {
-            text-align: right;
-        }
-
-        .text-center {
-            text-align: center;
-        }
-
-        .font-bold {
-            font-weight: bold;
-        }
-
-        .bg-grey {
-            background-color: #eee;
-        }
-
-        .text-red {
-            color: #c00;
-        }
-
-        .text-green {
-            color: #060;
-        }
-
-        .signature-section {
-            /* margin-top: 50px; */
-            display: table;
-            width: 100%;
-            /* margin-right: 40px; */
-        }
-
-        .signature-box {
-            display: table-cell;
-            width: 33.33%;
-            border-right: 1px dashed #aaa;
-            padding: 10px;
-            text-align: center;
-            height: 80px;
-            vertical-align: top;
-        }
-
-        .signature-label {
-            font-size: 8pt;
-            font-weight: bold;
-            text-decoration: underline;
-            margin-bottom: 40px;
-        }
-
-        .footer {
-            margin-top: 30px;
-            text-align: center;
-            font-size: 7pt;
-            color: #666;
-            border-top: 1px dotted #ccc;
-            padding-top: 10px;
-        }
-
-        @page {
-            margin-bottom: 50mm;
-        }
-
-        .pdf-footer {
-            position: fixed;
-            bottom: 0px;
-            left: 0;
-            right: 0;
-            width: 100%;
-            /* margin: 0 !important; */
-            /* padding: 0 !important; */
-        }
-    </style>
+@section('fixed_footer')
+    <div class="doc-footer-fixed">
+        <div><strong>{{ $boutique->nom ?? 'MalCom' }}</strong> • Registre d'audit des mouvements de stock certifié • MalCom Cloud v2.0</div>
+    </div>
 @endsection
 
 @section('content')
-    <div class="header-section">
-        <table style="width: 100%; border: none;">
-            <tr>
-                <td style="width: 50%; border: none;">
-                    <div style="font-size: 14pt; font-weight: bold;">{{ $boutique->nom ?? 'BOUTIQUE' }}</div>
-                    <div>{{ $boutique->adresse ?? '---' }}</div>
-                    <div>Tél: {{ $boutique->telephone ?? '---' }}</div>
-                </td>
-                <td style="width: 50%; border: none; text-align: right; vertical-align: top;">
-                    <div style="font-weight: bold; font-size: 11pt;">RAPPORT D'AUDIT DES MOUVEMENTS</div>
-                    <div>Généré le: {{ date('d/m/Y H:i') }}</div>
-                </td>
-            </tr>
-        </table>
-    </div>
-
-    @if ($filters['start_date'] || $filters['end_date'])
-        <table class="excel-table" style="margin-bottom: 20px;">
-            <tr>
-                <td class="bg-grey font-bold" style="width: 20%;">PÉRIODE FILTRÉE</td>
-                <td>
-                    @if ($filters['start_date'] && $filters['end_date'])
-                        Du {{ $filters['start_date'] }} au {{ $filters['end_date'] }}
-                    @elseif($filters['start_date'])
-                        Depuis le: {{ $filters['start_date'] }}
-                    @else
-                        Jusqu'au: {{ $filters['end_date'] }}
+    <!-- Header -->
+    <table class="header-table">
+        <tr>
+            <td style="width: 60%;">
+                <div style="font-size: 15pt; font-weight: 900; color: #0f172a; text-transform: uppercase; letter-spacing: 0.5px;">
+                    {{ $boutique->nom ?? 'MALCOM COMMERCE' }}
+                </div>
+                <div style="font-size: 7.5pt; color: #d97706; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; margin-top: 2px;">
+                    Contrôle des Stocks & Registre des Mouvements
+                </div>
+                <div style="font-size: 8pt; color: #475569; margin-top: 4px;">
+                    {{ $boutique->adresse ?? '---' }} | Tél : {{ $boutique->telephone ?? '---' }}
+                </div>
+            </td>
+            <td style="width: 40%; text-align: right;">
+                <div class="doc-title-badge">
+                    REGISTRE D'INVENTAIRE
+                </div>
+                <table style="width: 100%; border: none; font-size: 8pt; margin-top: 2px;">
+                    <tr>
+                        <td style="text-align: right; color: #64748b; padding: 1px 4px;">Date d'édition :</td>
+                        <td style="text-align: right; font-weight: bold; color: #0f172a;">{{ date('d/m/Y H:i') }}</td>
+                    </tr>
+                    @if ($filters['start_date'] || $filters['end_date'])
+                        <tr>
+                            <td style="text-align: right; color: #64748b; padding: 1px 4px;">Période auditée :</td>
+                            <td style="text-align: right; font-weight: bold; color: #047857;">
+                                {{ $filters['start_date'] ?? 'Origine' }} au {{ $filters['end_date'] ?? 'Ce jour' }}
+                            </td>
+                        </tr>
                     @endif
-                </td>
-            </tr>
-        </table>
-    @endif
+                </table>
+            </td>
+        </tr>
+    </table>
 
-    <table class="excel-table zebra">
+    <!-- Executive Stats Cards -->
+    <table style="width: 100%; border-collapse: separate; border-spacing: 8px 0; margin-bottom: 12px;">
+        <tr>
+            <td style="background-color: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 4px; padding: 8px 12px; width: 25%;">
+                <div style="font-size: 6.5pt; font-weight: bold; color: #065f46; text-transform: uppercase;">TOTAL ENTRÉES</div>
+                <div style="font-size: 13pt; font-weight: 900; color: #047857; margin-top: 2px;">+{{ $stats['totalEntrees'] }} <span style="font-size: 7.5pt; font-weight: normal;">unités</span></div>
+            </td>
+            <td style="background-color: #fff1f2; border: 1px solid #fecdd3; border-radius: 4px; padding: 8px 12px; width: 25%;">
+                <div style="font-size: 6.5pt; font-weight: bold; color: #9f1239; text-transform: uppercase;">TOTAL SORTIES</div>
+                <div style="font-size: 13pt; font-weight: 900; color: #be123c; margin-top: 2px;">-{{ $stats['totalSorties'] }} <span style="font-size: 7.5pt; font-weight: normal;">unités</span></div>
+            </td>
+            <td style="background-color: #eff6ff; border: 1px solid #bfdbfe; border-radius: 4px; padding: 8px 12px; width: 25%;">
+                <div style="font-size: 6.5pt; font-weight: bold; color: #1e40af; text-transform: uppercase;">VARIATION NETTE</div>
+                <div style="font-size: 13pt; font-weight: 900; color: {{ $stats['netMouvement'] >= 0 ? '#047857' : '#be123c' }}; margin-top: 2px;">
+                    {{ $stats['netMouvement'] > 0 ? '+' : '' }}{{ $stats['netMouvement'] }} <span style="font-size: 7.5pt; font-weight: normal;">unités</span>
+                </div>
+            </td>
+            <td style="background-color: #f8fafc; border: 1px solid #cbd5e1; border-radius: 4px; padding: 8px 12px; width: 25%;">
+                <div style="font-size: 6.5pt; font-weight: bold; color: #475569; text-transform: uppercase;">LIGNES D'AUDIT</div>
+                <div style="font-size: 13pt; font-weight: 900; color: #0f172a; margin-top: 2px;">{{ count($inventaires) }} <span style="font-size: 7.5pt; font-weight: normal;">opérations</span></div>
+            </td>
+        </tr>
+    </table>
+
+    <!-- Data Table -->
+    <table class="table-data">
         <thead>
             <tr>
-                <th style="width: 12%;">DATE / HEURE</th>
-                <th style="width: 25%;">DÉSIGNATION ARTICLE</th>
-                <th style="width: 10%;" class="text-center">NATURE</th>
-                <th style="width: 23%;">MOTIF / DESCRIPTION</th>
-                <th style="width: 8%;" class="text-center">QTÉ</th>
-                <th style="width: 10%;" class="text-right">PRIX UNIT.</th>
-                <th style="width: 12%;" class="text-right">TOTAL</th>
+                <th style="width: 13%; text-align: center;">DATE & HEURE</th>
+                <th style="width: 27%; text-align: left;">DÉSIGNATION DE L'ARTICLE</th>
+                <th style="width: 10%; text-align: center;">FLUX</th>
+                <th style="width: 24%; text-align: left;">MOTIF / JUSTIFICATION</th>
+                <th style="width: 8%; text-align: center;">QTÉ</th>
+                <th style="width: 9%; text-align: right;">P.U. ({{ $boutique->devise ?? 'FCFA' }})</th>
+                <th style="width: 9%; text-align: right;">VALEUR TOTALE</th>
             </tr>
         </thead>
         <tbody>
             @foreach ($inventaires as $item)
                 @php
-                    $pu =
-                        $item->type === 'retrait'
-                            ? $item->produit->stock->prix_vente ?? 0
-                            : $item->produit->stock->prix_achat ?? 0;
+                    $pu = $item->type === 'retrait'
+                        ? ($item->produit->stock->prix_vente ?? 0)
+                        : ($item->produit->stock->prix_achat ?? 0);
                     $total = $item->quantite * $pu;
                 @endphp
                 <tr>
-                    <td class="text-center">{{ \Carbon\Carbon::parse($item->created_at)->format('d/m/Y H:i') }}</td>
-                    <td class="font-bold">{{ $item->produit->nom ?? 'N/A' }}</td>
-                    <td class="text-center font-bold {{ $item->type === 'retrait' ? 'text-red' : 'text-green' }}">
-                        {{ $item->type === 'retrait' ? 'SORTIE' : 'ENTRÉE' }}
+                    <td style="text-align: center; font-size: 7.5pt; color: #475569;">
+                        {{ \Carbon\Carbon::parse($item->created_at)->format('d/m/Y H:i') }}
                     </td>
-                    <td style="font-size: 7.5pt; font-style: italic;">{{ $item->description }}</td>
-                    <td class="text-center font-bold">{{ $item->type === 'retrait' ? '-' : '+' }}{{ $item->quantite }}
+                    <td>
+                        <strong style="text-transform: uppercase; color: #0f172a;">{{ $item->produit->nom ?? 'Article Inconnu' }}</strong>
+                        @if($item->user) <span style="font-size: 6.5pt; color: #94a3b8;">(Opérateur: {{ $item->user->name }})</span> @endif
                     </td>
-                    <td class="text-right">{{ number_format($pu, 0, ',', ' ') }}</td>
-                    <td class="text-right font-bold">{{ number_format($total, 0, ',', ' ') }}</td>
+                    <td style="text-align: center;">
+                        @if($item->type === 'retrait')
+                            <span class="badge badge-danger">SORTIE</span>
+                        @else
+                            <span class="badge badge-success">ENTRÉE</span>
+                        @endif
+                    </td>
+                    <td style="font-size: 7pt; color: #475569;">{{ $item->description }}</td>
+                    <td style="text-align: center; font-weight: bold; color: {{ $item->type === 'retrait' ? '#be123c' : '#047857' }};">
+                        {{ $item->type === 'retrait' ? '-' : '+' }}{{ $item->quantite }}
+                    </td>
+                    <td style="text-align: right; color: #334155;">{{ number_format($pu, 0, ',', ' ') }}</td>
+                    <td style="text-align: right; font-weight: bold; color: #0f172a;">{{ number_format($total, 0, ',', ' ') }}</td>
                 </tr>
             @endforeach
         </tbody>
-        <tfoot>
-            <tr>
-                <td colspan="4" class="text-right font-bold">RÉSUMÉ DU FLUX DE STOCK</td>
-                <td class="text-center font-bold {{ $stats['netMouvement'] >= 0 ? 'text-green' : 'text-red' }}">
-                    {{ $stats['netMouvement'] > 0 ? '+' : '' }}{{ $stats['netMouvement'] }}
-                </td>
-                <td colspan="2" class="text-right font-bold">
-                    VAL. ACQUISITION: {{ number_format($stats['valeurAchatEntrante'], 0, ',', ' ') }}
-                    {{ $boutique->devise }}
-                </td>
-            </tr>
-        </tfoot>
     </table>
 
-    <div class="pdf-footer">
-        <div class="signature-section" style="margin-top: 0px;">
-            <div class="signature-box">
-                <div class="signature-label">Gestionnaire de Stock</div>
-                <div style="font-size: 7pt; color: #999; margin-top: 30px;">...................</div>
-            </div>
-            <div class="signature-box">
-                <div class="signature-label">Audit Interne</div>
-                <div style="font-size: 7pt; color: #999; margin-top: 30px;">...................</div>
-            </div>
-            <div class="signature-box">
-                <div class="signature-label">Direction</div>
-                <div style="font-size: 7pt; color: #999; margin-top: 30px;">....................</div>
-            </div>
-        </div>
-
-        <div class="footer">
-            Document d'audit officiel généré par Ma Boutique le {{ date('d/m/Y à H:i') }} - Page 1/1
-        </div>
+    <!-- Signatures (Pinned to bottom of the last page) -->
+    <div class="signatures-pinned-bottom">
+        <table class="signatures-table">
+            <tr>
+                <td style="width: 33.33%;">
+                    <div class="signature-title">Le Gestionnaire des Stocks</div>
+                    <div class="signature-line" style="width: 130px;"></div>
+                </td>
+                <td style="width: 33.33%;">
+                    <div class="signature-title">L'Auditeur / Contrôleur</div>
+                    <div class="signature-line" style="width: 130px;"></div>
+                </td>
+                <td style="width: 33.33%;">
+                    <div class="signature-title">La Direction Générale</div>
+                    <div class="signature-line" style="width: 130px;"></div>
+                </td>
+            </tr>
+        </table>
     </div>
 @endsection
