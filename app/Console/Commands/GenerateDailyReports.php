@@ -39,19 +39,31 @@ class GenerateDailyReports extends Command
 
                 $report = $controller->generateReport($boutique->id, $date);
 
-                $admins = \App\Models\User::where('role', 'admin')
-                    ->where('boutique_id', $boutique->id)
+                $recipients = \App\Models\User::where(function ($q) use ($boutique) {
+                        $q->where('id', $boutique->user_id)
+                          ->orWhere('boutique_id', $boutique->id);
+                    })
+                    ->whereIn('role', ['admin', 'admin1', 'gestionnaire'])
                     ->whereNotNull('email')
+                    ->where('email', '!=', '')
                     ->get();
 
-                if ($admins->isEmpty()) {
-                    $this->warn("  ⚠ Aucun administrateur avec email trouvé pour {$boutique->nom}");
+                // Si aucun destinataire direct n'est trouvé, envoyer aux super-admins globaux
+                if ($recipients->isEmpty()) {
+                    $recipients = \App\Models\User::whereIn('role', ['admin', 'admin1'])
+                        ->whereNotNull('email')
+                        ->where('email', '!=', '')
+                        ->get();
+                }
+
+                if ($recipients->isEmpty()) {
+                    $this->warn("  ⚠ Aucun administrateur ou gestionnaire avec email trouvé pour {$boutique->nom}");
                     continue;
                 }
 
-                foreach ($admins as $admin) {
-                    Mail::to($admin->email)->send(new DailyReportMail($report));
-                    $this->info("  ✓ Email envoyé à {$admin->email}");
+                foreach ($recipients as $recipient) {
+                    Mail::to($recipient->email)->send(new DailyReportMail($report));
+                    $this->info("  ✓ Email envoyé à {$recipient->email}");
                 }
 
                 // Send via WhatsApp

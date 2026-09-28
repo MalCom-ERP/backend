@@ -11,6 +11,10 @@ class Produit extends Model
 {
     use HasApiTokens, HasFactory, SoftDeletes;
     protected $guarded = [];
+
+    protected $casts = [
+        'config' => 'array'
+    ];
     // On definit la relation entre les produits et les categories
     public function categorie()
     {

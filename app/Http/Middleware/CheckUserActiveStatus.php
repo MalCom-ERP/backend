@@ -46,6 +46,15 @@ class CheckUserActiveStatus
                     'boutique_active' => false
                 ], 403);
             }
+
+            if ($boutique && $boutique->isLicenceExpired()) {
+                return response()->json([
+                    'message' => "La licence de votre boutique « {$boutique->nom} » a expiré. Veuillez saisir votre clé d'activation.",
+                    'error' => 'licence_expired',
+                    'boutique_active' => false,
+                    'is_licence_expired' => true
+                ], 403);
+            }
         }
 
         return $next($request);
