@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <polygon fill="#6B3AFD" points="362,250 862,250 732,380 622,380 754,512 622,644 732,644 862,774 362,774 624,512"/>
+  <path fill="#6B3AFD" fill-rule="evenodd" d="M 162,250 L 424,512 L 162,774 L 312,774 L 574,512 L 312,250 Z M 319,362 L 469,512 L 319,662 L 379,662 L 529,512 L 379,362 Z"/>
+</svg>

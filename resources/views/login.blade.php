@@ -5,7 +5,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Connexion SuperAdmin - MalCom</title>
-    <link rel="icon" href="{{ asset('img/admin-pro-logo.svg') }}">
+    <link rel="icon" type="image/svg+xml" href="{{ asset('img/icone_droite.svg') }}">
+    <link rel="alternate icon" href="{{ asset('favicon.ico') }}">
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -51,8 +52,8 @@
         <div class="bg-white/95 backdrop-blur-2xl p-8 sm:p-10 rounded-[2.5rem] shadow-2xl border border-white/20">
             <!-- Brand Header -->
             <div class="text-center space-y-3 mb-8">
-                <div class="inline-flex w-16 h-16 rounded-3xl bg-gradient-to-tr from-brand-600 via-indigo-600 to-indigo-500 items-center justify-center text-white text-3xl shadow-xl shadow-brand-500/30 mb-2">
-                    <i class="bi bi-shield-shaded"></i>
+                <div class="inline-flex w-16 h-16 rounded-3xl bg-white border border-slate-200/80 items-center justify-center shadow-xl shadow-brand-500/10 mb-2 p-3">
+                    <img src="{{ asset('img/icone_droite.svg') }}" alt="MalCom" class="w-full h-full object-contain">
                 </div>
                 <div>
                     <div class="flex items-center justify-center gap-2">

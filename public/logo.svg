@@ -1,11 +1,27 @@
-<svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect width="40" height="40" rx="12" fill="url(#paint0_linear)"/>
-  <path d="M12 28V12L20 20L28 12V28" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M20 20L20 32" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" opacity="0.5"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
   <defs>
-    <linearGradient id="paint0_linear" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#4F46E5"/>
-      <stop offset="1" stop-color="#7C3AED"/>
-    </linearGradient>
+    <style>
+      .bg { fill: transparent; }
+      .violet { fill: #6B3AFD; }
+      .text-dark { fill: #111111; }
+      .text-sub { fill: #7A7A7A; }
+    </style>
   </defs>
+  <rect width="1024" height="1024" class="bg"/>
+  
+  <g transform="translate(512, 400) scale(0.65) translate(-500, -512)">
+    <!-- Chevron (Outer and Inner as evenodd path) -->
+    <path class="violet" fill-rule="evenodd" d="
+      M 150,250 L 412,512 L 150,774 L 300,774 L 562,512 L 300,250 Z
+      M 307,362 L 457,512 L 307,662 L 367,662 L 517,512 L 367,362 Z
+    "/>
+    <!-- C-Shape -->
+    <polygon class="violet" points="350,250 850,250 720,380 610,380 742,512 610,644 720,644 850,774 350,774 612,512"/>
+  </g>
+  
+  <!-- Text -->
+  <text x="512" y="780" font-family="system-ui, -apple-system, 'Montserrat', 'Inter', sans-serif" font-size="130" font-weight="900" text-anchor="middle">
+    <tspan class="text-dark">Mal</tspan><tspan class="violet">Com</tspan>
+  </text>
+  <text x="512" y="850" font-family="system-ui, -apple-system, 'Montserrat', 'Inter', sans-serif" font-size="24" font-weight="700" letter-spacing="14" text-anchor="middle" class="text-sub">VOTRE COMMERCE, PLUS FORT</text>
 </svg>

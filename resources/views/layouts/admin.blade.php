@@ -4,7 +4,8 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="icon" href="{{ asset('img/admin-pro-logo.svg') }}">
+    <link rel="icon" type="image/svg+xml" href="{{ asset('img/icone_droite.svg') }}">
+    <link rel="alternate icon" href="{{ asset('favicon.ico') }}">
     <title>MalCom - SuperAdmin PRO</title>
 
     <!-- Fonts -->
@@ -340,8 +341,8 @@
         <!-- Brand Identity -->
         <div class="px-8 pt-8 pb-6 flex items-center gap-4 border-b border-white/5">
             <div class="relative group">
-                <div class="w-12 h-12 rounded-2xl bg-gradient-to-tr from-brand-600 via-indigo-500 to-indigo-400 flex items-center justify-center shadow-lg shadow-brand-500/30 group-hover:scale-105 transition-transform duration-300">
-                    <i class="bi bi-shield-shaded text-2xl text-white"></i>
+                <div class="w-12 h-12 rounded-2xl bg-white p-2.5 flex items-center justify-center shadow-lg shadow-brand-500/20 group-hover:scale-105 transition-transform duration-300">
+                    <img src="{{ asset('img/icone_droite.svg') }}" alt="MalCom" class="w-full h-full object-contain">
                 </div>
                 <div class="absolute -bottom-1 -right-1 w-3.5 h-3.5 bg-emerald-500 rounded-full border-2 border-slate-950"></div>
             </div>
