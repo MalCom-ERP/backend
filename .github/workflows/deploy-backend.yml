@@ -11,43 +11,43 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup SSH
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+      # - name: Setup SSH
+      #   run: |
+      #     mkdir -p ~/.ssh
+      #     echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_ed25519
+      #     chmod 600 ~/.ssh/id_ed25519
+      #     ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Deploy to VPS
-        run: |
-          ssh -T ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} << EOF
-            set -e
+      # - name: Deploy to VPS
+      #   run: |
+      #     ssh -T ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} << EOF
+      #       set -e
 
-            cd /var/www/maboutique/backend
+      #       cd /var/www/maboutique/backend
 
-            echo "Reset git state"
-            git rebase --abort || true
-            rm -rf .git/rebase-merge || true
+      #       echo "Reset git state"
+      #       git rebase --abort || true
+      #       rm -rf .git/rebase-merge || true
 
-            echo "📦 Sync with origin/main"
-            git fetch origin
-            git reset --hard origin/main
-            echo "Code synced"
+      #       echo "📦 Sync with origin/main"
+      #       git fetch origin
+      #       git reset --hard origin/main
+      #       echo "Code synced"
 
-            echo "Install dependencies"
-            composer install --no-dev --optimize-autoloader --no-interaction
+      #       echo "Install dependencies"
+      #       composer install --no-dev --optimize-autoloader --no-interaction
 
-            echo "🔐 Fix Laravel writable folders"
-            sudo chmod -R 775 storage bootstrap/cache
+      #       echo "🔐 Fix Laravel writable folders"
+      #       sudo chmod -R 775 storage bootstrap/cache
 
 
-            echo "Run migrations"
-            php artisan migrate --force
+      #       echo "Run migrations"
+      #       php artisan migrate --force
 
-            echo "🧹 Optimize"
-            php artisan optimize:clear
-            php artisan config:cache
-            php artisan route:cache
+      #       echo "🧹 Optimize"
+      #       php artisan optimize:clear
+      #       php artisan config:cache
+      #       php artisan route:cache
 
-            echo "Deployment finished"
-          EOF
+      #       echo "Deployment finished"
+      #     EOF

@@ -18,3 +18,7 @@ yarn-error.log
 /.idea
 /.vscode
 .DS_Store
+*.sqlite
+*.sqlite3
+database/*.sqlite
+database/*.sqlite-journal
