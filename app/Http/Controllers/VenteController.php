@@ -82,17 +82,19 @@ class VenteController extends Controller
             return response()->json(['message' => 'Boutique non identifiée'], 400);
         }
 
+        $ancienMontantTotal = (float) $vente->montant_total;
+        $ancienSurplusTotal = (float) ($vente->surplus ?? 0);
         $nouveauMontantBrut = 0;
-        $nouvelleRemiseTotale = $request->input('remise', 0); // User can adjust global remise too
+        $nouvelleRemiseTotale = (float) $request->input('remise', 0); // User can adjust global remise too
 
         DB::beginTransaction();
         try {
             foreach ($request->produits as $produitData) {
                 // Handle different payload structures
                 $produitId = $produitData['produit']['id'] ?? $produitData['produit_id'];
-                $nouvelleQte = $produitData['quantite'];
-                $nouveauPrixU = $produitData['prix_unitaire'] ?? null;
-                $nouvelleRemiseLigne = $produitData['remise'] ?? 0;
+                $nouvelleQte = (int) $produitData['quantite'];
+                $nouveauPrixU = isset($produitData['prix_unitaire']) ? (float)$produitData['prix_unitaire'] : null;
+                $nouvelleRemiseLigne = (float) ($produitData['remise'] ?? 0);
 
                 $detailVente = DetailVente::where('vente_id', $venteId)
                     ->where('produit_id', $produitId)
@@ -101,8 +103,8 @@ class VenteController extends Controller
                 if (!$detailVente) continue;
 
                 $ancienneQte = $detailVente->quantite;
-                $ancienPrixU = $detailVente->prix_unitaire;
-                $ancienneRemiseLigne = $detailVente->remise;
+                $ancienPrixU = (float) $detailVente->prix_unitaire;
+                $ancienneRemiseLigne = (float) $detailVente->remise;
 
                 $difference = $ancienneQte - $nouvelleQte;
                 $diffRemise = $ancienneRemiseLigne - $nouvelleRemiseLigne;
@@ -124,6 +126,7 @@ class VenteController extends Controller
                     }
 
                     $remiseAudit = $diffRemise + ($diffPrix * $nouvelleQte); // Correction for profit impact
+                    $itemSurplusUnit = (float) ($detailVente->surplus_unitaire ?? 0);
 
                     Inventaire::create([
                         'produit_id' => $produitId,
@@ -135,6 +138,7 @@ class VenteController extends Controller
                         'prix_achat' => $stock ? $stock->prix_achat : 0,
                         'prix_vente' => $nouveauPrixU ?? $detailVente->prix_unitaire,
                         'remise' => $remiseAudit, 
+                        'surplus' => max(0, $difference * $itemSurplusUnit),
                         'description' => ($difference > 0 ? 'Retour Client (Audit)' : ($difference < 0 ? 'Ajustement Vente' : 'Correction Prix/Remise')) . ' sur Vente #' . $venteId,
                         'date' => now()
                     ]);
@@ -146,6 +150,19 @@ class VenteController extends Controller
                     $detailVente->quantite = $nouvelleQte;
                     $detailVente->prix_unitaire = $nouveauPrixU ?? $detailVente->prix_unitaire;
                     $detailVente->remise = $nouvelleRemiseLigne;
+
+                    // Recalculate item surplus
+                    $surplusUnit = (float) ($detailVente->surplus_unitaire ?? 0);
+                    if ($surplusUnit > 0) {
+                        $detailVente->surplus = $surplusUnit * $nouvelleQte;
+                    } else {
+                        $basePrice = (float) ($detailVente->prix_base ?? $detailVente->prix_unitaire);
+                        if ($detailVente->prix_unitaire > $basePrice) {
+                            $detailVente->surplus_unitaire = $detailVente->prix_unitaire - $basePrice;
+                            $detailVente->surplus = $detailVente->surplus_unitaire * $nouvelleQte;
+                        }
+                    }
+
                     $detailVente->montant = $detailVente->prix_unitaire * $nouvelleQte;
                     $detailVente->montant_total = $detailVente->montant;
                     $detailVente->montant_paye = $detailVente->montant - $nouvelleRemiseLigne;
@@ -170,13 +187,15 @@ class VenteController extends Controller
                     'prix_achat' => 0,
                     'prix_vente' => 0,
                     'remise' => $diffRemiseGlobale,
+                    'surplus' => 0,
                     'description' => 'Ajustement Remise Globale (Audit Vente #' . $venteId . ')',
                     'date' => now()
                 ]);
             }
 
-            // Recalculate Global Sale Total
-            $montantFinalApresRemise = $nouveauMontantBrut - $nouvelleRemiseTotale;
+            // Recalculate Global Sale Total and Surplus
+            $montantFinalApresRemise = max(0, $nouveauMontantBrut - $nouvelleRemiseTotale);
+            $nouveauSurplusTotal = (float) DetailVente::where('vente_id', $venteId)->sum('surplus');
 
             if ($nouveauMontantBrut <= 0) {
                 // Total cancellation logic...
@@ -200,6 +219,8 @@ class VenteController extends Controller
                 }
                 $vente->montant_total = 0;
                 $vente->remise = 0;
+                $vente->surplus = 0;
+                $vente->save();
 
                 // SYSCOHADA : Contre-passation de la vente totalement retournée / annulée
                 app(\App\Services\ComptaService::class)->enregistrerAnnulationVente($vente);
@@ -210,12 +231,12 @@ class VenteController extends Controller
                     $ancienRestant = $vente->montant_restant;
 
                     if ($valeurRetour > $ancienRestant) {
-                        $surplus = $valeurRetour - $ancienRestant;
+                        $surplusRemb = $valeurRetour - $ancienRestant;
                         Expense::create([
                             'type' => "Remboursement Retour",
                             'boutique_id' => $boutique_id,
                             'user_id' => $user->id,
-                            'montant' => $surplus,
+                            'montant' => $surplusRemb,
                             'date' => now(),
                             'description' => "Remboursement surplus audit sur vente #" . $venteId,
                         ]);
@@ -228,12 +249,26 @@ class VenteController extends Controller
                 }
                 $vente->montant_total = $montantFinalApresRemise;
                 $vente->remise = $nouvelleRemiseTotale;
+                $vente->surplus = $nouveauSurplusTotal;
+                $vente->save();
+
+                // SYSCOHADA : Régularisation comptable immédiate de la vente rectifiée
+                app(\App\Services\ComptaService::class)->enregistrerCorrectionVente(
+                    $vente,
+                    $ancienMontantTotal,
+                    $montantFinalApresRemise,
+                    $ancienSurplusTotal,
+                    $nouveauSurplusTotal
+                );
             }
 
-            $vente->save();
             DB::commit();
 
-            return response()->json(['message' => 'Vente rectifiée avec succès', 'nouveau_montant' => $montantFinalApresRemise], 200);
+            return response()->json([
+                'message' => 'Vente rectifiée avec succès et comptabilisée',
+                'nouveau_montant' => $montantFinalApresRemise,
+                'nouveau_surplus' => $nouveauSurplusTotal
+            ], 200);
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json(['message' => $e->getMessage()], 400);
@@ -270,13 +305,20 @@ class VenteController extends Controller
                 'prix_achat' => $stock ? $stock->prix_achat : 0,
                 'prix_vente' => $detail->prix_unitaire,
                 'remise' => 0, // Reset remise on total cancellation
+                'surplus' => $detail->surplus ?? 0,
                 'description' => 'Annulation de Vente #' . $vente->id,
                 'date' => now()
             ]);
         }
 
         $vente->statut = 'annulee';
+        $vente->montant_total = 0;
+        $vente->remise = 0;
+        $vente->surplus = 0;
         $vente->save();
+
+        // SYSCOHADA : Contre-passation de la vente annulée
+        app(\App\Services\ComptaService::class)->enregistrerAnnulationVente($vente);
 
         return response()->json(['message' => 'Vente annulée avec succès'], 200);
     }
@@ -323,6 +365,7 @@ class VenteController extends Controller
                     'prix_achat' => $stock ? $stock->prix_achat : 0,
                     'prix_vente' => $detail->prix_unitaire,
                     'remise' => $lineRemise, // FIXED: Correct line reduction
+                    'surplus' => $detail->surplus ?? 0,
                     'description' => 'Annulation de Vente #' . $vente->id . ' (' . ($produit ? $produit->nom : 'Produit inconnu') . ')',
                     'date' => now()
                 ]);
@@ -341,6 +384,7 @@ class VenteController extends Controller
                     'prix_achat' => 0,
                     'prix_vente' => 0,
                     'remise' => $extraReduction,
+                    'surplus' => 0,
                     'description' => 'Annulation Remise Globale (Vente #' . $vente->id . ')',
                     'date' => now()
                 ]);
@@ -369,6 +413,7 @@ class VenteController extends Controller
 
             $vente->montant_total = 0;
             $vente->remise = 0;
+            $vente->surplus = 0;
             $vente->statut = 'annulee';
             $vente->save();
 
@@ -940,6 +985,16 @@ class VenteController extends Controller
 
             $vente->montant_total = $request->montant_total;
 
+            // Calcul du surplus total si non fourni explicitement
+            $sumLineSurplus = 0;
+            if (is_array($request->produits)) {
+                foreach ($request->produits as $item) {
+                    $surplusU = (float)($item['surplus_unitaire'] ?? 0);
+                    $sumLineSurplus += ($surplusU * (float)($item['quantite'] ?? 1));
+                }
+            }
+            $vente->surplus = $request->input('surplus', $sumLineSurplus);
+
             if ($is_proforma) {
                 $vente->statut = 'proforma';
                 $vente->remise = $request->remise ?? 0;
@@ -983,11 +1038,18 @@ class VenteController extends Controller
                 $detail->produit_id = $pId;
                 $detail->quantite = $item['quantite'];
 
-                // Custom prices and discounts
-                $prixU = $item['prix_vendu'] ?? ($item['prix'] ?? ($item['produits']['stock']['prix_vente'] ?? ($stock->prix_vente ?? 0)));
+                // Custom prices, surplus and discounts
+                $basePrice = $item['prix'] ?? ($item['produits']['stock']['prix_vente'] ?? ($stock->prix_vente ?? 0));
+                $surplusUnitaire = (float)($item['surplus_unitaire'] ?? 0);
+                $surplusLine = $surplusUnitaire * $item['quantite'];
+
+                $prixU = $item['prix_vendu'] ?? ($basePrice + $surplusUnitaire);
                 $remiseLine = ($item['remise_unitaire'] ?? 0) * $item['quantite'];
                 $sumLineRemises += $remiseLine;
 
+                $detail->prix_base = $basePrice;
+                $detail->surplus_unitaire = $surplusUnitaire;
+                $detail->surplus = $surplusLine;
                 $detail->prix_unitaire = $prixU;
                 $detail->montant = $prixU * $item['quantite'];
                 $detail->remise = $remiseLine;
@@ -1007,7 +1069,8 @@ class VenteController extends Controller
                         'prix_achat' => $stock ? $stock->prix_achat : 0,
                         'prix_vente' => $prixU,
                         'remise' => $remiseLine,
-                        'description' => $vente->statut == 'credit' ? "Produit " . $pNom . " vendu a credit " : "Vente du produit # " . (isset($item['produits']['reference']) ? $item['produits']['reference'] : ($item['reference'] ?? "Produit #$pId")),
+                        'surplus' => $surplusLine,
+                        'description' => ($vente->statut == 'credit' ? "Produit " . $pNom . " vendu a credit " : "Vente du produit # " . (isset($item['produits']['reference']) ? $item['produits']['reference'] : ($item['reference'] ?? "Produit #$pId"))) . ($surplusLine > 0 ? " [Surplus: +" . number_format($surplusLine, 0, ',', ' ') . " F]" : ""),
                         'date' => $vente->date_vente
                     ]);
                 }
@@ -1125,6 +1188,14 @@ class VenteController extends Controller
                 $vente->monnaie_rendue = $vData['monnaie_rendue'] ?? 0;
                 $vente->montant_avance = $vData['montant_avance'] ?? 0;
                 $vente->remise = $vData['remise'] ?? 0;
+                $sumOfflineSurplus = 0;
+                if (!empty($vData['produits']) && is_array($vData['produits'])) {
+                    foreach ($vData['produits'] as $item) {
+                        $surplusU = (float)($item['surplus_unitaire'] ?? 0);
+                        $sumOfflineSurplus += ($surplusU * (float)($item['quantite'] ?? 1));
+                    }
+                }
+                $vente->surplus = $vData['surplus'] ?? $sumOfflineSurplus;
                 $vente->statut = ($typePaiement === 'credit') ? 'credit' : 'payee';
                 $vente->montant_restant = ($typePaiement === 'credit')
                     ? ($vData['montant_total'] - $vente->montant_avance)
@@ -1145,13 +1216,19 @@ class VenteController extends Controller
                         $stock->save();
                     }
 
-                    $prixU = $item['prix_vendu'] ?? ($item['prix'] ?? ($stock->prix_vente ?? 0));
+                    $basePrice = $item['prix'] ?? ($item['produits']['stock']['prix_vente'] ?? ($stock->prix_vente ?? 0));
+                    $surplusUnitaire = (float)($item['surplus_unitaire'] ?? 0);
+                    $surplusLine = $surplusUnitaire * $item['quantite'];
+                    $prixU = $item['prix_vendu'] ?? ($basePrice + $surplusUnitaire);
                     $remiseLine = ($item['remise_unitaire'] ?? 0) * $item['quantite'];
 
                     $detail = new DetailVente();
                     $detail->vente_id = $vente->id;
                     $detail->produit_id = $pId;
                     $detail->quantite = $item['quantite'];
+                    $detail->prix_base = $basePrice;
+                    $detail->surplus_unitaire = $surplusUnitaire;
+                    $detail->surplus = $surplusLine;
                     $detail->prix_unitaire = $prixU;
                     $detail->montant = $prixU * $item['quantite'];
                     $detail->remise = $remiseLine;
@@ -1170,7 +1247,8 @@ class VenteController extends Controller
                         'prix_achat' => $stock ? $stock->prix_achat : 0,
                         'prix_vente' => $prixU,
                         'remise' => $remiseLine,
-                        'description' => "Vente hors-ligne synchronisée #" . $vente->id,
+                        'surplus' => $surplusLine,
+                        'description' => "Vente hors-ligne synchronisée #" . $vente->id . ($surplusLine > 0 ? " [Surplus: +" . number_format($surplusLine, 0, ',', ' ') . " F]" : ""),
                         'date' => $vente->date_vente,
                     ]);
                 }

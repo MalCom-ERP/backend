@@ -110,6 +110,7 @@ class DailyReportController extends Controller
                 'ventes_net' => $data['totaux']['ventes_net'],
                 'total_depenses' => $data['totaux']['depenses'],
                 'benefice_net' => $data['totaux']['benefice_net'],
+                'total_surplus' => $data['totaux']['surplus'] ?? 0,
                 'nombre_ventes' => $data['stats']['nombre_ventes'],
                 'nombre_depenses' => $data['stats']['nombre_depenses'],
             ],
@@ -557,6 +558,7 @@ class DailyReportController extends Controller
         $totaux = [
             'ventes_brut' => $ventesBrut,
             'remises' => $totalRemise,
+            'surplus' => (float)$ventes->sum('surplus') + (float)$venteCredit->sum('surplus'),
             'ventes_net' => $ventes_net,
             'ventes_annulee_net' => $venteAnnulee->sum('montant_total'),
             'ventes_credit_net' => $totalNetCredit,

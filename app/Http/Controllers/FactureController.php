@@ -61,6 +61,9 @@ class FactureController extends Controller
                             'nomProduit' => $dv->produit ? $dv->produit->nom : 'Produit inconnu',
                             'quantite' => $dv->quantite,
                             'prixUnitaire' => $dv->prix_unitaire,
+                            'prixBase' => $dv->prix_base ?? $dv->prix_unitaire,
+                            'surplus' => (float)($dv->surplus ?? 0),
+                            'remise' => (float)($dv->remise ?? 0),
                             'montant' => $dv->montant
                         ];
                     }
@@ -93,6 +96,9 @@ class FactureController extends Controller
                     'nomProduit' => $dv->produit ? $dv->produit->nom : 'Produit inconnu',
                     'quantite' => $dv->quantite,
                     'prixUnitaire' => $dv->prix_unitaire,
+                    'prixBase' => $dv->prix_base ?? $dv->prix_unitaire,
+                    'surplus' => (float)($dv->surplus ?? 0),
+                    'remise' => (float)($dv->remise ?? 0),
                     'montant' => $dv->montant
                 ];
             }
@@ -123,6 +129,7 @@ class FactureController extends Controller
             'dateFacture' => $dateFacture,
             'montant_total' => $montantTotal,
             'montant_remis' => $firstVente ? ($firstVente->remise ?: ($firstVente->detailVentes->first()->remise ?? 0)) : 0,
+            'surplus' => (float)($firstVente?->surplus ?? 0),
             'montant_avance' => $totalAvance,
             'montant_restant' => $totalRestant,
             'moyen_paiement' => $moyenPaiement,

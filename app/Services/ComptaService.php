@@ -195,11 +195,29 @@ class ComptaService
             $montant = (float) $vente->montant_total;
             if ($montant <= 0) return;
 
+            $surplus = (float) ($vente->surplus ?? 0);
+            $baseVente = max(0, $montant - $surplus);
+
             $date = $vente->date_vente ? Carbon::parse($vente->date_vente)->format('Y-m-d') : date('Y-m-d');
             $libelle = "Vente #" . $vente->id . ($vente->client ? " - " . $vente->client->nom : "");
 
+            // Assurer l'existence du compte de surplus 7018 si besoin
+            if ($surplus > 0) {
+                CompteComptable::firstOrCreate(
+                    ['numero' => '7018', 'boutique_id' => null],
+                    [
+                        'libelle' => 'Surplus et majorations sur ventes',
+                        'classe' => 7,
+                        'type' => 'produit',
+                        'sens_normal' => 'credit',
+                        'is_system' => true,
+                        'is_active' => true,
+                    ]
+                );
+            }
+
             if ($vente->type_paiement === 'credit') {
-                // Vente à crédit : Débit 411 (Client), Crédit 701 (Vente)
+                // Vente à crédit : Débit 411 (Client), Crédit 701 (Vente), Crédit 7018 (Surplus éventuel)
                 $lignes = [
                     [
                         'numero' => '411', // Clients
@@ -207,19 +225,35 @@ class ComptaService
                         'credit' => 0,
                         'libelle' => $libelle . " (Créance)",
                     ],
-                    [
+                ];
+
+                if ($surplus > 0) {
+                    $lignes[] = [
+                        'numero' => '701', // Ventes de marchandises
+                        'debit' => 0,
+                        'credit' => $baseVente,
+                        'libelle' => $libelle . " (Prix de base)",
+                    ];
+                    $lignes[] = [
+                        'numero' => '7018', // Surplus sur ventes
+                        'debit' => 0,
+                        'credit' => $surplus,
+                        'libelle' => $libelle . " [Surplus: +" . number_format($surplus, 0, ',', ' ') . " FCFA]",
+                    ];
+                } else {
+                    $lignes[] = [
                         'numero' => '701', // Ventes de marchandises
                         'debit' => 0,
                         'credit' => $montant,
                         'libelle' => $libelle,
-                    ],
-                ];
+                    ];
+                }
 
                 $this->createEcriture(
                     $vente->boutique_id,
                     'VT',
                     $date,
-                    $libelle . " [Crédit]",
+                    $libelle . " [Crédit]" . ($surplus > 0 ? " (avec surplus)" : ""),
                     $lignes,
                     'Vente',
                     $vente->id,
@@ -256,7 +290,7 @@ class ComptaService
                     );
                 }
             } elseif ($vente->type_paiement !== 'proforma') {
-                // Vente au comptant : Débit 571 (Caisse), Crédit 701 (Vente)
+                // Vente au comptant : Débit 571 (Caisse), Crédit 701 (Vente), Crédit 7018 (Surplus éventuel)
                 $lignes = [
                     [
                         'numero' => '571', // Caisse principale
@@ -264,19 +298,35 @@ class ComptaService
                         'credit' => 0,
                         'libelle' => $libelle,
                     ],
-                    [
+                ];
+
+                if ($surplus > 0) {
+                    $lignes[] = [
+                        'numero' => '701', // Ventes de marchandises
+                        'debit' => 0,
+                        'credit' => $baseVente,
+                        'libelle' => $libelle . " (Prix de base)",
+                    ];
+                    $lignes[] = [
+                        'numero' => '7018', // Surplus sur ventes
+                        'debit' => 0,
+                        'credit' => $surplus,
+                        'libelle' => $libelle . " [Surplus: +" . number_format($surplus, 0, ',', ' ') . " FCFA]",
+                    ];
+                } else {
+                    $lignes[] = [
                         'numero' => '701', // Ventes de marchandises
                         'debit' => 0,
                         'credit' => $montant,
                         'libelle' => $libelle,
-                    ],
-                ];
+                    ];
+                }
 
                 $this->createEcriture(
                     $vente->boutique_id,
                     'VT',
                     $date,
-                    $libelle,
+                    $libelle . ($surplus > 0 ? " (avec surplus)" : ""),
                     $lignes,
                     'Vente',
                     $vente->id,
@@ -301,82 +351,231 @@ class ComptaService
                 ->exists();
             if ($exists) return;
 
-            $montant = (float) $vente->montant_total;
-            if ($montant <= 0) {
-                // Si le montant de la vente a déjà été mis à 0 par le contrôleur, on récupère le montant de l'écriture initiale
-                $origEcriture = EcritureComptable::where('source_type', 'Vente')
-                    ->where('source_id', $vente->id)
-                    ->with('lignes')
-                    ->first();
-                if ($origEcriture && $origEcriture->lignes->count() > 0) {
-                    $montant = (float) $origEcriture->lignes->sum('debit');
+            // Récupérer l'écriture d'origine de la vente
+            $origEcriture = EcritureComptable::where('source_type', 'Vente')
+                ->where('source_id', $vente->id)
+                ->with('lignes.compte')
+                ->first();
+
+            $date = date('Y-m-d');
+            $libelle = "Annulation Vente #" . $vente->id . ($vente->client ? " - " . $vente->client->nom : "");
+
+            if ($origEcriture && $origEcriture->lignes->count() > 0) {
+                // Inversion exacte de toutes les lignes de l'écriture initiale (Débit <-> Crédit)
+                $lignes = [];
+                foreach ($origEcriture->lignes as $ligne) {
+                    $debit = (float)$ligne->debit;
+                    $credit = (float)$ligne->credit;
+                    $lignes[] = [
+                        'compte_id' => $ligne->compte_id,
+                        'debit' => $credit,
+                        'credit' => $debit,
+                        'libelle' => "Annulation : " . $ligne->libelle,
+                    ];
                 }
+
+                $this->createEcriture(
+                    $vente->boutique_id,
+                    'VT',
+                    $date,
+                    $libelle,
+                    $lignes,
+                    'AnnulationVente',
+                    $vente->id,
+                    $vente->user_id
+                );
+                return;
             }
 
+            // Fallback si l'écriture initiale n'est pas trouvée
+            $montant = (float) $vente->montant_total;
             if ($montant <= 0) {
-                Log::warning("ComptaService::enregistrerAnnulationVente: Impossible d'annuler la vente #{$vente->id}, montant nul ou écriture introuvable.");
+                return;
+            }
+
+            $surplus = (float) ($vente->surplus ?? 0);
+            $baseVente = max(0, $montant - $surplus);
+
+            $compteTiersOuTresorerie = ($vente->type_paiement === 'credit') ? '411' : '571';
+
+            $lignes = [];
+            if ($baseVente > 0) {
+                $lignes[] = [
+                    'numero' => '701', // Ventes
+                    'debit' => $baseVente,
+                    'credit' => 0,
+                    'libelle' => $libelle . " (Annulation base)",
+                ];
+            }
+            if ($surplus > 0) {
+                $lignes[] = [
+                    'numero' => '7018', // Surplus
+                    'debit' => $surplus,
+                    'credit' => 0,
+                    'libelle' => $libelle . " (Annulation surplus)",
+                ];
+            }
+            $lignes[] = [
+                'numero' => $compteTiersOuTresorerie,
+                'debit' => 0,
+                'credit' => $montant,
+                'libelle' => $libelle . ($vente->type_paiement === 'credit' ? " (Créance annulée)" : " (Remboursement caisse)"),
+            ];
+
+            $this->createEcriture(
+                $vente->boutique_id,
+                'VT',
+                $date,
+                $libelle,
+                $lignes,
+                'AnnulationVente',
+                $vente->id,
+                $vente->user_id
+            );
+        } catch (\Exception $e) {
+            Log::error("Erreur ComptaService::enregistrerAnnulationVente: " . $e->getMessage(), [
+                'vente_id' => $vente->id,
+            ]);
+        }
+    }
+
+    /**
+     * Enregistrer l'écriture de régularisation comptable lors d'une Correction Transactionnelle (Retour/Ajustement)
+     */
+    public function enregistrerCorrectionVente(
+        Vente $vente,
+        float $ancienMontant,
+        float $nouveauMontant,
+        float $ancienSurplus = 0,
+        float $nouveauSurplus = 0
+    ): void {
+        try {
+            $difference = $ancienMontant - $nouveauMontant;
+            if (abs($difference) < 0.01) {
+                return; // Aucun écart financier
+            }
+
+            // Vérifier si la vente originale a été comptabilisée
+            $origEcriture = EcritureComptable::where('source_type', 'Vente')
+                ->where('source_id', $vente->id)
+                ->first();
+
+            if (!$origEcriture) {
+                // Si la vente initiale n'avait pas encore d'écriture dans le journal, on l'enregistre avec son montant actuel
+                $this->enregistrerVente($vente);
                 return;
             }
 
             $date = date('Y-m-d');
-            $libelle = "Annulation Vente #" . $vente->id;
+            $libelle = "Correction/Retour Vente #" . $vente->id . ($vente->client ? " - " . $vente->client->nom : "");
 
-            if ($vente->type_paiement === 'credit') {
-                $lignes = [
+            $diffSurplus = $ancienSurplus - $nouveauSurplus;
+
+            // S'assurer que le compte 7018 existe si surplus
+            if ($ancienSurplus > 0 || $nouveauSurplus > 0 || abs($diffSurplus) > 0.01) {
+                CompteComptable::firstOrCreate(
+                    ['numero' => '7018', 'boutique_id' => null],
                     [
-                        'numero' => '701', // Ventes de marchandises
-                        'debit' => $montant,
-                        'credit' => 0,
-                        'libelle' => $libelle,
-                    ],
-                    [
-                        'numero' => '411', // Clients
-                        'debit' => 0,
-                        'credit' => $montant,
-                        'libelle' => $libelle . " (Créance annulée)",
-                    ],
-                ];
-                
-                $this->createEcriture(
-                    $vente->boutique_id,
-                    'VT',
-                    $date,
-                    $libelle,
-                    $lignes,
-                    'AnnulationVente',
-                    $vente->id,
-                    $vente->user_id
+                        'libelle' => 'Surplus et majorations sur ventes',
+                        'classe' => 7,
+                        'type' => 'produit',
+                        'sens_normal' => 'credit',
+                        'is_system' => true,
+                        'is_active' => true,
+                    ]
                 );
-                
-            } else {
-                $lignes = [
-                    [
+            }
+
+            $compteTiersOuTresorerie = ($vente->type_paiement === 'credit') ? '411' : '571';
+
+            if ($difference > 0) {
+                // Diminution du montant (Retour d'articles en stock, baisse de prix, augmentation de remise)
+                $diffSurplusReduction = max(0, min($difference, $diffSurplus));
+                $diffBaseReduction = max(0, $difference - $diffSurplusReduction);
+
+                $lignes = [];
+
+                if ($diffBaseReduction > 0) {
+                    $lignes[] = [
                         'numero' => '701', // Ventes de marchandises
-                        'debit' => $montant,
+                        'debit' => $diffBaseReduction,
                         'credit' => 0,
-                        'libelle' => $libelle,
-                    ],
-                    [
-                        'numero' => '571', // Caisse
-                        'debit' => 0,
-                        'credit' => $montant,
-                        'libelle' => $libelle,
-                    ],
+                        'libelle' => $libelle . " (Réintégration stock base)",
+                    ];
+                }
+
+                if ($diffSurplusReduction > 0) {
+                    $lignes[] = [
+                        'numero' => '7018', // Surplus sur ventes
+                        'debit' => $diffSurplusReduction,
+                        'credit' => 0,
+                        'libelle' => $libelle . " (Annulation surplus)",
+                    ];
+                }
+
+                $lignes[] = [
+                    'numero' => $compteTiersOuTresorerie,
+                    'debit' => 0,
+                    'credit' => $difference,
+                    'libelle' => $libelle . ($vente->type_paiement === 'credit' ? " (Diminution créance)" : " (Restitution fonds caisse)"),
                 ];
 
                 $this->createEcriture(
                     $vente->boutique_id,
                     'VT',
                     $date,
-                    $libelle,
+                    $libelle . " [Régularisation]",
                     $lignes,
-                    'AnnulationVente',
+                    'CorrectionVente',
                     $vente->id,
-                    $vente->user_id
+                    Auth::id() ?? $vente->user_id
+                );
+            } else {
+                // Augmentation du montant (Ajustement à la hausse)
+                $montantAugmentation = abs($difference);
+                $augSurplus = max(0, -$diffSurplus);
+                $augBase = max(0, $montantAugmentation - $augSurplus);
+
+                $lignes = [
+                    [
+                        'numero' => $compteTiersOuTresorerie,
+                        'debit' => $montantAugmentation,
+                        'credit' => 0,
+                        'libelle' => $libelle . ($vente->type_paiement === 'credit' ? " (Hausse créance)" : " (Encaissement complément)"),
+                    ],
+                ];
+
+                if ($augBase > 0) {
+                    $lignes[] = [
+                        'numero' => '701',
+                        'debit' => 0,
+                        'credit' => $augBase,
+                        'libelle' => $libelle . " (Complément base)",
+                    ];
+                }
+
+                if ($augSurplus > 0) {
+                    $lignes[] = [
+                        'numero' => '7018',
+                        'debit' => 0,
+                        'credit' => $augSurplus,
+                        'libelle' => $libelle . " (Complément surplus)",
+                    ];
+                }
+
+                $this->createEcriture(
+                    $vente->boutique_id,
+                    'VT',
+                    $date,
+                    $libelle . " [Complément]",
+                    $lignes,
+                    'CorrectionVente',
+                    $vente->id,
+                    Auth::id() ?? $vente->user_id
                 );
             }
         } catch (\Exception $e) {
-            Log::error("Erreur ComptaService::enregistrerAnnulationVente: " . $e->getMessage(), [
+            Log::error("Erreur ComptaService::enregistrerCorrectionVente: " . $e->getMessage(), [
                 'vente_id' => $vente->id,
             ]);
         }
@@ -465,6 +664,8 @@ class ComptaService
                 $compteCharge = '628'; // Téléphone et Internet
             } elseif (str_contains($typeClean, 'fourniture')) {
                 $compteCharge = '6052'; // Fournitures de bureau
+            } elseif (str_contains($typeClean, 'remboursement') || str_contains($typeClean, 'retour')) {
+                $compteCharge = '411'; // Remboursement trop-perçu client
             }
             $libelle = "Dépense : " . ($expense->type ?? 'Générale') . ($expense->description ? " - " . $expense->description : "");
 

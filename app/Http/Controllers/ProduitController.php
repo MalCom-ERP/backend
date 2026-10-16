@@ -406,6 +406,8 @@ class ProduitController extends Controller
             'valeurVenteSortante' => 0,
             'recettesCredit' => 0,
             'beneficeTheorique' => 0,
+            'totalSurplus' => 0,
+            'totalRemise' => 0,
             'netMouvement' => 0
         ];
 
@@ -443,6 +445,7 @@ class ProduitController extends Controller
                         'items' => [],
                         'totalQuantite' => 0,
                         'totalRemise' => 0, 
+                        'totalSurplus' => 0,
                         'impactNet' => 0,
                         'showDetails' => false
                     ];
@@ -451,6 +454,7 @@ class ProduitController extends Controller
                 $transactionMap[$groupKey]['items'][] = $item;
                 $transactionMap[$groupKey]['totalQuantite'] += $item->quantite;
                 $transactionMap[$groupKey]['totalRemise'] += (float)($item->remise ?? 0);
+                $transactionMap[$groupKey]['totalSurplus'] += (float)($item->surplus ?? 0);
                 
                 $pxAchat = $item->prix_achat ?? ($item->produit?->stock?->prix_achat ?? 0);
                 $pxVente = $item->prix_vente ?? ($item->produit?->stock?->prix_vente ?? 0);
@@ -507,6 +511,8 @@ class ProduitController extends Controller
                 // Addition to global stats for sales (retrait)
                 if ($g['type'] === 'retrait') {
                     $stats['totalSorties'] += $g['totalQuantite'];
+                    $stats['totalSurplus'] += (float)($g['totalSurplus'] ?? 0);
+                    $stats['totalRemise'] += (float)($g['totalRemise'] ?? 0);
                     $valVente = 0;
                     foreach($g['items'] as $it) {
                         $pxV = $it->prix_vente ?? ($it->produit?->stock?->prix_vente ?? 0);
@@ -545,10 +551,13 @@ class ProduitController extends Controller
             }
 
             $remise = (float)($item['remise'] ?? 0);
+            $surplus = (float)($item['surplus'] ?? 0);
             $qte = (float)$item['quantite'];
 
             if ($item['type'] === 'retrait') {
                 $stats['totalSorties'] += $qte;
+                $stats['totalSurplus'] += $surplus;
+                $stats['totalRemise'] += $remise;
                 $isCreditSale = stripos($item['description'] ?? '', 'credit') !== false;
                 if (!$isCreditSale) {
                     $stats['valeurVenteSortante'] += (($qte * $pxVente) - $remise);

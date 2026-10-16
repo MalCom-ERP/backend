@@ -95,6 +95,7 @@ class SyscohadaPlanComptableSeeder extends Seeder
 
             // Classe 7 : Produits des activités ordinaires
             ['numero' => '701', 'libelle' => 'Ventes de marchandises', 'classe' => 7, 'type' => 'produit', 'sens_normal' => 'credit'],
+            ['numero' => '7018', 'libelle' => 'Surplus et majorations sur ventes', 'classe' => 7, 'type' => 'produit', 'sens_normal' => 'credit'],
             ['numero' => '706', 'libelle' => 'Prestations de services vendues', 'classe' => 7, 'type' => 'produit', 'sens_normal' => 'credit'],
             ['numero' => '707', 'libelle' => 'Produits accessoires et emballages', 'classe' => 7, 'type' => 'produit', 'sens_normal' => 'credit'],
             ['numero' => '711', 'libelle' => 'Subventions et aides d\'exploitation', 'classe' => 7, 'type' => 'produit', 'sens_normal' => 'credit'],
