@@ -69,7 +69,7 @@ class InitStandaloneCommand extends Command
                 'telephone' => '000000000',
                 'email' => 'contact@malcom.local',
                 'is_active' => true,
-                'date_expiration_licence' => now()->addYears(2),
+                'date_expiration_licence' => now()->addDays(60),
                 'nature_id' => $defaultNature ? $defaultNature->id : 1,
                 'couleur_principale' => '#4f46e5',
                 'couleur_secondaire' => '#818cf8',
@@ -79,10 +79,10 @@ class InitStandaloneCommand extends Command
                 'footer_facture' => 'Merci pour votre confiance !',
             ]);
         } else {
-            // S'assurer que la licence locale est toujours valide (illimitée en mode autonome)
-            if (!$boutique->date_expiration_licence || $boutique->date_expiration_licence < now()) {
+            // S'assurer que la licence locale a une validité initiale de 2 mois si non définie
+            if (!$boutique->date_expiration_licence) {
                 $boutique->update([
-                    'date_expiration_licence' => now()->addYears(2),
+                    'date_expiration_licence' => now()->addDays(60),
                     'is_active' => true
                 ]);
             }
@@ -102,18 +102,18 @@ class InitStandaloneCommand extends Command
             $super->save();
         }
 
-        // 6. Licence active pour la boutique
+        // 6. Licence active pour la boutique (validité initiale 2 mois / 60 jours)
         $licence = Licence::where('boutique_id', $boutique->id)->first();
         if (!$licence) {
-            $this->info('🔑 Création de la licence autonome illimitée...');
+            $this->info('🔑 Création de la licence autonome (2 mois)...');
             Licence::create([
                 'boutique_id' => $boutique->id,
-                'cle_licence' => 'MC-STANDALONE-OFFLINE-EDITION',
-                'duree_jours' => 730, // 2 ans
+                'cle_licence' => 'MC-STANDALONE-' . strtoupper(\Illuminate\Support\Str::random(8)),
+                'duree_jours' => 60, // 2 mois (60 jours)
                 'statut' => 'active',
                 'date_activation' => now(),
-                'date_expiration' => now()->addYears(2),
-                'note' => 'Licence autonome locale permanente'
+                'date_expiration' => now()->addDays(60),
+                'note' => 'Licence autonome locale (validité 2 mois)'
             ]);
         }
 
@@ -157,7 +157,7 @@ class InitStandaloneCommand extends Command
                 ['Boutique par défaut', $boutique->nom . " (ID: {$boutique->id})"],
                 ['Identifiant Admin', 'admin@malcom.local (mdp: admin1234)'],
                 ['Identifiant SuperAdmin', 'super@maboutique.com (mdp: Skypper19@)'],
-                ['Licence', 'Autonome (2 ans)'],
+                ['Licence', 'Autonome (2 mois)'],
                 ['Exercice Actif', $currentYear]
             ]
         );

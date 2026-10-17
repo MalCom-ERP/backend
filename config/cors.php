@@ -33,7 +33,11 @@ return [
         'http://tauri.localhost'
     ],
 
-    'allowed_origins_patterns' => ['#^http://localhost:\d+$#'],
+    'allowed_origins_patterns' => [
+        '#^http://localhost:\d+$#',
+        '#^http://127\.0\.0\.1:\d+$#',
+        '#^https?://tauri\.localhost.*$#'
+    ],
 
     'allowed_headers' => ['*'],
 

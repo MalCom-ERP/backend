@@ -33,3 +33,9 @@ return Application::configure(basePath: dirname(__DIR__))
             return $request->expectsJson();
         });
     })->create();
+    
+if ($storagePath = env('LARAVEL_STORAGE_PATH')) {
+    $app->useStoragePath($storagePath);
+}
+
+return $app;
