@@ -26,8 +26,11 @@ return [
         'http://127.0.0.1:4200',
         'http://localhost:8000',
         'http://127.0.0.1:8000',
+        'http://localhost:8001',
+        'http://127.0.0.1:8001',
         'tauri://localhost',
-        'https://tauri.localhost'
+        'https://tauri.localhost',
+        'http://tauri.localhost'
     ],
 
     'allowed_origins_patterns' => ['#^http://localhost:\d+$#'],
