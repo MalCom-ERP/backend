@@ -154,24 +154,31 @@ class LicenceController extends Controller
     }
 
     /**
-     * Récupère l'état de la licence d'une boutique (ou boutique courante/première active si non spécifiée)
+     * Récupère l'état de la licence d'une boutique.
+     * SÉCURITÉ : Si aucun boutique_id n'est fourni (ex: nouveau navigateur ou nouvelle application non activée),
+     * on ne déverrouille JAMAIS automatiquement en prenant une autre boutique active de la base !
+     * Le nouvel appareil doit obligatoirement saisir sa clé d'activation pour se déverrouiller.
      */
     public function statut(Request $request, $boutique_id = null)
     {
-        if ($boutique_id) {
-            $boutique = Boutique::find($boutique_id);
-        } else {
-            // Si aucun boutique_id n'est fourni (ex: nouveau navigateur), privilégier une boutique ayant une licence active non expirée
-            $boutique = Boutique::where('is_active', true)
-                ->where(function ($q) {
-                    $q->whereNull('date_expiration_licence')
-                      ->orWhere('date_expiration_licence', '>', now());
-                })
-                ->first() ?: Boutique::first();
+        if (!$boutique_id || $boutique_id === 'null' || $boutique_id === 'undefined') {
+            return response()->json([
+                'requires_activation' => true,
+                'is_active' => false,
+                'is_expired' => true,
+                'message' => 'Veuillez saisir votre clé de licence pour activer l\'accès sur cet appareil.'
+            ], 200);
         }
 
+        $boutique = Boutique::find($boutique_id);
+
         if (!$boutique) {
-            return response()->json(['error' => 'Boutique introuvable.'], 404);
+            return response()->json([
+                'requires_activation' => true,
+                'is_active' => false,
+                'is_expired' => true,
+                'error' => 'Boutique introuvable.'
+            ], 404);
         }
 
         $root = $boutique->getRootBoutique();
