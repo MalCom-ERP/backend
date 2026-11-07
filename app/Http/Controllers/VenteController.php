@@ -18,6 +18,27 @@ use Illuminate\Support\Facades\Auth;
 
 class VenteController extends Controller
 {
+    private function getYearRawExpr($column = 'date_vente')
+    {
+        return DB::connection()->getDriverName() === 'sqlite'
+            ? "strftime('%Y', {$column})"
+            : "YEAR({$column})";
+    }
+
+    private function getMonthRawExpr($column = 'date_vente')
+    {
+        return DB::connection()->getDriverName() === 'sqlite'
+            ? "CAST(strftime('%m', {$column}) AS INTEGER)"
+            : "MONTH({$column})";
+    }
+
+    private function getDayRawExpr($column = 'date_vente')
+    {
+        return DB::connection()->getDriverName() === 'sqlite'
+            ? "CAST(strftime('%d', {$column}) AS INTEGER)"
+            : "DAY({$column})";
+    }
+
     /**
      * Display a listing of the resource.
      */
@@ -476,10 +497,11 @@ class VenteController extends Controller
         })->orderBy('annee', 'desc')->get();
 
         // 2. Any additional years with recorded sales
+        $yearCol = $this->getYearRawExpr('date_vente');
         $anneesVentes = Vente::where('boutique_id', $boutique_id)
             ->whereIn('statut', ['validee', 'payee', 'credit'])
-            ->selectRaw("YEAR(date_vente) as annee, SUM(montant_total) as ca")
-            ->groupByRaw("YEAR(date_vente)")
+            ->selectRaw("{$yearCol} as annee, SUM(montant_total) as ca")
+            ->groupByRaw($yearCol)
             ->get()
             ->keyBy('annee');
 
@@ -635,11 +657,12 @@ class VenteController extends Controller
     public function chiffreAffiare()
     {
         $boutique_id = $this->getBoutiqueId();
+        $yearCol = $this->getYearRawExpr('date_vente');
         $chiffre = Vente::where('boutique_id', $boutique_id)
             ->whereIn('statut', ['validee', 'payee', 'credit'])
-            ->selectRaw("YEAR(date_vente) as annee, SUM(montant_total) as total")
-            ->groupByRaw("YEAR(date_vente)")
-            ->orderByRaw("YEAR(date_vente)")
+            ->selectRaw("{$yearCol} as annee, SUM(montant_total) as total")
+            ->groupByRaw($yearCol)
+            ->orderByRaw($yearCol)
             ->get();
         return response()->json($chiffre, 200);
     }
@@ -647,11 +670,12 @@ class VenteController extends Controller
     public function getAnneeVente()
     {
         $boutique_id = $this->getBoutiqueId();
+        $yearCol = $this->getYearRawExpr('date_vente');
         $annee = Vente::where('boutique_id', $boutique_id)
             ->whereIn('statut', ['validee', 'payee', 'credit'])
-            ->selectRaw("YEAR(date_vente) as annee")
-            ->groupByRaw("YEAR(date_vente)")
-            ->orderByRaw("YEAR(date_vente) DESC")
+            ->selectRaw("{$yearCol} as annee")
+            ->groupByRaw($yearCol)
+            ->orderByRaw("{$yearCol} DESC")
             ->get();
         return response()->json($annee, 200);
     }
@@ -776,10 +800,11 @@ class VenteController extends Controller
             $q->whereNull('boutique_id')->orWhere('boutique_id', $boutique_id);
         })->orderBy('annee', 'desc')->get();
 
+        $yearCol = $this->getYearRawExpr('date_vente');
         $anneesVentes = Vente::where('boutique_id', $boutique_id)
             ->whereIn('statut', ['validee', 'payee', 'credit'])
-            ->selectRaw("YEAR(date_vente) as annee, SUM(montant_total) as ca")
-            ->groupByRaw("YEAR(date_vente)")
+            ->selectRaw("{$yearCol} as annee, SUM(montant_total) as ca")
+            ->groupByRaw($yearCol)
             ->get()
             ->keyBy('annee');
 
@@ -816,12 +841,14 @@ class VenteController extends Controller
     public function getVenteByMois($annee, $mois)
     {
         $boutique_id = $this->getBoutiqueId();
+        $dayCol = $this->getDayRawExpr('date_vente');
         $venteAnneeMois = Vente::where('boutique_id', $boutique_id)
             ->whereIn('statut', ['validee', 'payee', 'credit'])
-            ->selectRaw("DAY(date_vente) as jour, SUM(montant_total) as total")
-            ->whereRaw("YEAR(date_vente) = ? AND MONTH(date_vente) = ?", [$annee, $mois])
-            ->groupByRaw("DAY(date_vente)")
-            ->orderByRaw("DAY(date_vente)")
+            ->whereYear('date_vente', (int)$annee)
+            ->whereMonth('date_vente', (int)$mois)
+            ->selectRaw("{$dayCol} as jour, SUM(montant_total) as total")
+            ->groupByRaw($dayCol)
+            ->orderByRaw($dayCol)
             ->get();
         return response()->json($venteAnneeMois, 200);
     }
@@ -829,16 +856,43 @@ class VenteController extends Controller
     public function nBventeDateJour($year, $month, $day)
     {
         $boutique_id = $this->getBoutiqueId();
-        $results = DB::table('ventes')
+        $targetDate = sprintf('%04d-%02d-%02d', (int)$year, (int)$month, (int)$day);
+        
+        $ventesJour = DB::table('ventes')
             ->where('boutique_id', $boutique_id)
             ->whereIn('statut', ['validee', 'payee', 'credit'])
-            ->whereRaw("YEAR(date_vente) = ? AND MONTH(date_vente) = ? AND DAY(date_vente) = ?", [
-                $year,
-                $month,
-                $day
-            ])
-            ->selectRaw('COUNT(*) as nombre, SUM(montant_total) as total')
-            ->first();
+            ->whereDate('date_vente', $targetDate)
+            ->get(['montant_total', 'created_at', 'date_vente']);
+
+        $nombre = $ventesJour->count();
+        $total = (float)$ventesJour->sum('montant_total');
+
+        // Distribution horaire pour le graphique
+        $labels = ['08:00', '10:00', '12:00', '14:00', '16:00', '18:00', '20:00'];
+        $chartMontant = [0, 0, 0, 0, 0, 0, 0];
+        $chartNombre = [0, 0, 0, 0, 0, 0, 0];
+
+        foreach ($ventesJour as $v) {
+            $hour = $v->created_at ? (int)\Carbon\Carbon::parse($v->created_at)->format('H') : 12;
+            if ($hour < 9) $idx = 0;
+            elseif ($hour < 11) $idx = 1;
+            elseif ($hour < 13) $idx = 2;
+            elseif ($hour < 15) $idx = 3;
+            elseif ($hour < 17) $idx = 4;
+            elseif ($hour < 19) $idx = 5;
+            else $idx = 6;
+
+            $chartMontant[$idx] += (float)$v->montant_total;
+            $chartNombre[$idx] += 1;
+        }
+
+        $results = (object)[
+            'nombre' => $nombre,
+            'total' => $total,
+            'chart_labels' => $labels,
+            'chart_montant' => $chartMontant,
+            'chart_nombre' => $chartNombre,
+        ];
 
         return response()->json([$results], 200);
     }
@@ -846,15 +900,44 @@ class VenteController extends Controller
     public function nBventeDateMois($year, $month)
     {
         $boutique_id = $this->getBoutiqueId();
-        $results = DB::table('ventes')
+        $daysInMonth = \Carbon\Carbon::createFromDate((int)$year, (int)$month, 1)->daysInMonth;
+
+        $ventesMois = DB::table('ventes')
             ->where('boutique_id', $boutique_id)
             ->whereIn('statut', ['validee', 'payee', 'credit'])
-            ->whereRaw("YEAR(date_vente) = ? AND MONTH(date_vente) = ?", [
-                $year,
-                $month
-            ])
-            ->selectRaw('COUNT(*) as nombre, SUM(montant_total) as total')
-            ->first();
+            ->whereYear('date_vente', (int)$year)
+            ->whereMonth('date_vente', (int)$month)
+            ->get(['montant_total', 'date_vente']);
+
+        $nombre = $ventesMois->count();
+        $total = (float)$ventesMois->sum('montant_total');
+
+        // Distribution par jour du mois (J1 .. J31)
+        $labels = [];
+        $chartMontant = [];
+        $chartNombre = [];
+
+        for ($d = 1; $d <= $daysInMonth; $d++) {
+            $labels[] = 'J' . $d;
+            $chartMontant[$d] = 0;
+            $chartNombre[$d] = 0;
+        }
+
+        foreach ($ventesMois as $v) {
+            $dayNum = (int)\Carbon\Carbon::parse($v->date_vente)->day;
+            if (isset($chartMontant[$dayNum])) {
+                $chartMontant[$dayNum] += (float)$v->montant_total;
+                $chartNombre[$dayNum] += 1;
+            }
+        }
+
+        $results = (object)[
+            'nombre' => $nombre,
+            'total' => $total,
+            'chart_labels' => $labels,
+            'chart_montant' => array_values($chartMontant),
+            'chart_nombre' => array_values($chartNombre),
+        ];
 
         return response()->json([$results], 200);
     }
@@ -862,12 +945,34 @@ class VenteController extends Controller
     public function nBventeDateAnnee($year)
     {
         $boutique_id = $this->getBoutiqueId();
-        $results = DB::table('ventes')
+        $ventesAnnee = DB::table('ventes')
             ->where('boutique_id', $boutique_id)
             ->whereIn('statut', ['validee', 'payee', 'credit'])
-            ->whereRaw("YEAR(date_vente) = ?", [$year])
-            ->selectRaw('COUNT(*) as nombre, SUM(montant_total) as total')
-            ->first();
+            ->whereYear('date_vente', (int)$year)
+            ->get(['montant_total', 'date_vente']);
+
+        $nombre = $ventesAnnee->count();
+        $total = (float)$ventesAnnee->sum('montant_total');
+
+        $labels = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sep', 'Oct', 'Nov', 'Déc'];
+        $chartMontant = array_fill(0, 12, 0);
+        $chartNombre = array_fill(0, 12, 0);
+
+        foreach ($ventesAnnee as $v) {
+            $mNum = (int)\Carbon\Carbon::parse($v->date_vente)->month;
+            if ($mNum >= 1 && $mNum <= 12) {
+                $chartMontant[$mNum - 1] += (float)$v->montant_total;
+                $chartNombre[$mNum - 1] += 1;
+            }
+        }
+
+        $results = (object)[
+            'nombre' => $nombre,
+            'total' => $total,
+            'chart_labels' => $labels,
+            'chart_montant' => $chartMontant,
+            'chart_nombre' => $chartNombre,
+        ];
 
         return response()->json([$results], 200);
     }

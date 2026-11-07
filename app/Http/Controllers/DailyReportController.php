@@ -148,31 +148,34 @@ class DailyReportController extends Controller
         $soldeTheorique = $fondDeCaisse + $data['totaux']['especes_ventes'] + $data['totaux']['recouvrement_especes'] - $data['totaux']['depenses_especes'];
         $ecart = $totalEspecesPhysique - $soldeTheorique;
 
-        $report = DailyReport::updateOrCreate(
-            [
-                'boutique_id' => $boutiqueId,
-                'date' => $date
-            ],
-            [
-                'fond_de_caisse' => $fondDeCaisse,
-                'total_especes_theorique' => round($soldeTheorique, 2),
-                'total_especes_physique' => round($totalEspecesPhysique, 2),
-                'ecart_caisse' => round($ecart, 2),
-                'billetage' => $request->billetage ?: [],
-                'total_ventes' => $data['totaux']['ventes_net'],
-                'total_depenses' => $data['totaux']['depenses'],
-                'benefice_net' => $data['totaux']['benefice_net'],
-                'total_mobile_money' => $data['totaux']['mobile_money'],
-                'total_carte_bancaire' => $data['totaux']['carte_bancaire'],
-                'total_credit' => $data['totaux']['ventes_credit_net'],
-                'total_recouvrement' => $data['totaux']['recouvrement_especes'] + $data['totaux']['recouvrement_autres'],
-                'nombre_ventes' => $data['stats']['nombre_ventes'],
-                'nombre_depenses' => $data['stats']['nombre_depenses'],
-                'statut_cloture' => 'cloturee',
-                'cloture_par_user_id' => Auth::id(),
-                'notes_cloture' => $request->notes_cloture
-            ]
-        );
+        $report = DailyReport::where('boutique_id', $boutiqueId)
+            ->whereDate('date', $date)
+            ->first();
+
+        if (!$report) {
+            $report = new DailyReport();
+            $report->boutique_id = $boutiqueId;
+            $report->date = $date;
+        }
+
+        $report->fond_de_caisse = $fondDeCaisse;
+        $report->total_especes_theorique = round($soldeTheorique, 2);
+        $report->total_especes_physique = round($totalEspecesPhysique, 2);
+        $report->ecart_caisse = round($ecart, 2);
+        $report->billetage = $request->billetage ?: [];
+        $report->total_ventes = $data['totaux']['ventes_net'];
+        $report->total_depenses = $data['totaux']['depenses'];
+        $report->benefice_net = $data['totaux']['benefice_net'];
+        $report->total_mobile_money = $data['totaux']['mobile_money'];
+        $report->total_carte_bancaire = $data['totaux']['carte_bancaire'];
+        $report->total_credit = $data['totaux']['ventes_credit_net'];
+        $report->total_recouvrement = $data['totaux']['recouvrement_especes'] + $data['totaux']['recouvrement_autres'];
+        $report->nombre_ventes = $data['stats']['nombre_ventes'];
+        $report->nombre_depenses = $data['stats']['nombre_depenses'];
+        $report->statut_cloture = 'cloturee';
+        $report->cloture_par_user_id = Auth::id();
+        $report->notes_cloture = $request->notes_cloture;
+        $report->save();
 
         // Générer le PDF A4 officiel
         try {
@@ -420,37 +423,44 @@ class DailyReportController extends Controller
         $boutique = Boutique::findOrFail($boutiqueId);
         $data = $this->loadReportData($boutiqueId, $date);
 
-        $report = DailyReport::updateOrCreate(
-            [
-                'boutique_id' => $boutiqueId,
-                'date' => $date
-            ],
-            [
-                'total_ventes' => $data['totaux']['ventes_net'],
-                'total_depenses' => $data['totaux']['depenses'],
-                'benefice_net' => $data['totaux']['benefice_net'],
-                'total_mobile_money' => $data['totaux']['mobile_money'],
-                'total_carte_bancaire' => $data['totaux']['carte_bancaire'],
-                'total_credit' => $data['totaux']['ventes_credit_net'],
-                'total_recouvrement' => $data['totaux']['recouvrement_especes'] + $data['totaux']['recouvrement_autres'],
-                'nombre_ventes' => $data['stats']['nombre_ventes'],
-                'nombre_depenses' => $data['stats']['nombre_depenses']
-            ]
-        );
+        $report = DailyReport::where('boutique_id', $boutiqueId)
+            ->whereDate('date', $date)
+            ->first();
 
-        $pdf = PDF::loadView('pdf.rapport_journalier', array_merge($data, ['report' => $report]))
-            ->setPaper('a4', 'portrait')
-            ->setOptions([
-                'isHtml5ParserEnabled' => true,
-                'isRemoteEnabled' => true,
-                'defaultFont' => 'sans-serif'
-            ]);
+        if (!$report) {
+            $report = new DailyReport();
+            $report->boutique_id = $boutiqueId;
+            $report->date = $date;
+        }
 
-        $filename = "rapports/rapport-{$boutique->nom}-{$date}.pdf";
-        Storage::put($filename, $pdf->output());
-
-        $report->pdf_path = $filename;
+        $report->total_ventes = $data['totaux']['ventes_net'];
+        $report->total_depenses = $data['totaux']['depenses'];
+        $report->benefice_net = $data['totaux']['benefice_net'];
+        $report->total_mobile_money = $data['totaux']['mobile_money'];
+        $report->total_carte_bancaire = $data['totaux']['carte_bancaire'];
+        $report->total_credit = $data['totaux']['ventes_credit_net'];
+        $report->total_recouvrement = $data['totaux']['recouvrement_especes'] + $data['totaux']['recouvrement_autres'];
+        $report->nombre_ventes = $data['stats']['nombre_ventes'];
+        $report->nombre_depenses = $data['stats']['nombre_depenses'];
         $report->save();
+
+        try {
+            $pdf = PDF::loadView('pdf.rapport_journalier', array_merge($data, ['report' => $report]))
+                ->setPaper('a4', 'portrait')
+                ->setOptions([
+                    'isHtml5ParserEnabled' => true,
+                    'isRemoteEnabled' => true,
+                    'defaultFont' => 'sans-serif'
+                ]);
+
+            $filename = "rapports/rapport-{$boutique->nom}-{$date}.pdf";
+            Storage::put($filename, $pdf->output());
+
+            $report->pdf_path = $filename;
+            $report->save();
+        } catch (\Throwable $e) {
+            \Log::warning("Génération PDF rapport ignorée : " . $e->getMessage());
+        }
 
         return $report;
     }

@@ -155,8 +155,11 @@ class ExpenseController extends Controller
         $totalByYear = (clone $query)->whereYear('date', $year)->sum('montant');
         $totalByMonth = (clone $query)->whereYear('date', $year)->whereMonth('date', $month)->sum('montant');
         
+        $isSqlite = DB::connection()->getDriverName() === 'sqlite';
+        $monthExpr = $isSqlite ? "CAST(strftime('%m', date) AS INTEGER)" : "MONTH(date)";
+
         $monthlyEvolution = (clone $query)->whereYear('date', $year)
-            ->selectRaw('MONTH(date) as month, SUM(montant) as total')
+            ->selectRaw("{$monthExpr} as month, SUM(montant) as total")
             ->groupBy('month')
             ->orderBy('month')
             ->get();
@@ -168,7 +171,7 @@ class ExpenseController extends Controller
             ->get();
 
         $breakdownByMode = (clone $query)->whereYear('date', $year)
-            ->selectRaw('COALESCE(mode_paiement, "especes") as mode, SUM(montant) as total')
+            ->selectRaw("COALESCE(mode_paiement, 'especes') as mode, SUM(montant) as total")
             ->groupBy('mode')
             ->get();
 

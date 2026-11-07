@@ -20,6 +20,10 @@ return [
     'allowed_methods' => ['*'],
 
     'allowed_origins' => [
+        'https://malcom-lgc.com',
+        'https://www.malcom-lgc.com',
+        'https://app.malcom-lgc.com',
+        'https://admin.malcom-lgc.com',
         'https://front.maboutique.tech',
         'https://admin.maboutique.tech',
         'http://localhost:4200',
