@@ -23,6 +23,7 @@ class User extends Authenticatable
         'email',
         'password',
         'role',
+        'permissions',
         'boutique_id',
         'is_active',
         'boutique_limit'
@@ -48,7 +49,39 @@ class User extends Authenticatable
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'permissions' => 'array',
         ];
+    }
+
+    /**
+     * Vérifie si l'utilisateur possède une permission spécifique (par son rôle par défaut ou par délégation).
+     * Permissions supportées :
+     * - can_reappro : Réapprovisionnement de stock (Admin par défaut)
+     * - can_change_prices : Modification des prix d'achat/vente (Admin par défaut)
+     * - can_view_ca : Consultation du Chiffre d'Affaires (Admin & Comptable par défaut)
+     * - can_view_margins : Consultation des marges et prix d'achat (Admin par défaut)
+     */
+    public function hasPermission(string $permission): bool
+    {
+        $role = strtolower((string) $this->role);
+
+        if ($role === 'admin' || $role === 'super_admin') {
+            return true;
+        }
+
+        $perms = is_array($this->permissions) ? $this->permissions : [];
+
+        // Si l'admin a explicitement défini la permission (true ou false) pour cet utilisateur
+        if (array_key_exists($permission, $perms)) {
+            return (bool) $perms[$permission];
+        }
+
+        // Droits par défaut selon le rôle si non spécifié dans permissions
+        if ($permission === 'can_view_ca' && $role === 'comptable') {
+            return true;
+        }
+
+        return false;
     }
 
     public function boutique()

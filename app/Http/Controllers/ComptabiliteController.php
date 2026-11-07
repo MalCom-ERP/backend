@@ -23,6 +23,7 @@ class ComptabiliteController extends Controller
      */
     public function comptes(Request $request)
     {
+        $this->comptaService->ensureSyscohadaSeeded();
         $boutiqueId = $this->getBoutiqueId();
         $boutique = $boutiqueId ? \App\Models\Boutique::find($boutiqueId) : null;
 
@@ -129,6 +130,7 @@ class ComptabiliteController extends Controller
      */
     public function journaux(Request $request)
     {
+        $this->comptaService->ensureSyscohadaSeeded();
         $boutiqueId = $this->getBoutiqueId();
 
         $journaux = JournalComptable::where(function ($q) use ($boutiqueId) {

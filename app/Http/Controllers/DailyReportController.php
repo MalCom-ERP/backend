@@ -246,6 +246,7 @@ class DailyReportController extends Controller
         return response()->json([
             'message' => 'Clôture de caisse enregistrée avec succès',
             'report' => $report->load(['boutique', 'cloturePar']),
+            'totaux' => $data['totaux'],
             'ecart' => $ecart,
             'whatsapp_message' => $whatsappMsg,
             'whatsapp_link' => $whatsappLink,
@@ -472,18 +473,21 @@ class DailyReportController extends Controller
         $ventes = Vente::with(['detailVentes.produit', 'client', 'user'])
             ->where('boutique_id', $boutiqueId)
             ->whereIn('statut', ['payee', 'validee'])
+            ->where('type_paiement', '!=', 'credit')
+            ->where('type_paiement', '!=', 'proforma')
             ->whereDate('date_vente', $date)
             ->get();
 
         $venteCredit = Vente::with(['detailVentes.produit', 'client', 'user'])
             ->where('boutique_id', $boutiqueId)
-            ->where('statut', 'credit')
+            ->where('type_paiement', 'credit')
+            ->whereIn('statut', ['credit', 'payee', 'validee'])
             ->whereDate('date_vente', $date)
             ->get();
 
         $venteAnnulee = Vente::with(['detailVentes.produit', 'client', 'user'])
             ->where('boutique_id', $boutiqueId)
-            ->where('statut', 'annulee')
+            ->whereIn('statut', ['annulee', 'Credit annule'])
             ->whereDate('date_vente', $date)
             ->get();
 
@@ -506,10 +510,10 @@ class DailyReportController extends Controller
         $carteBancaire = 0;
 
         foreach ($ventes as $v) {
-            $mode = strtolower(trim($v->type_paiement ?: 'especes'));
+            $mode = strtolower(trim($v->moyen_paiement ?: ($v->type_paiement ?: 'especes')));
             $montant = (float)$v->montant_total;
 
-            if ($mode === 'especes' || $mode === 'comptant') {
+            if ($mode === 'especes' || $mode === 'comptant' || $mode === 'contant') {
                 $especesVentes += $montant;
             } elseif (str_contains($mode, 'orange')) {
                 $orangeMoney += $montant;
@@ -528,6 +532,25 @@ class DailyReportController extends Controller
                 $carteBancaire += (float)($dp['carte'] ?? 0);
             } else {
                 $especesVentes += $montant;
+            }
+        }
+
+        // Ajouter les avances/acomptes encaissés immédiatement sur les ventes à crédit du jour
+        foreach ($venteCredit as $vc) {
+            $avance = (float)($vc->montant_avance ?? 0);
+            if ($avance > 0) {
+                $modeAvance = strtolower(trim($vc->moyen_paiement ?: 'especes'));
+                if (str_contains($modeAvance, 'orange')) {
+                    $orangeMoney += $avance;
+                } elseif (str_contains($modeAvance, 'moov')) {
+                    $moovMoney += $avance;
+                } elseif (str_contains($modeAvance, 'wave')) {
+                    $wave += $avance;
+                } elseif (str_contains($modeAvance, 'carte') || str_contains($modeAvance, 'cheque') || str_contains($modeAvance, 'virement')) {
+                    $carteBancaire += $avance;
+                } else {
+                    $especesVentes += $avance;
+                }
             }
         }
 

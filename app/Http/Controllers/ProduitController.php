@@ -60,13 +60,21 @@ class ProduitController extends Controller
 
     public function reapproCreate(Request $request)
     {
+        /** @var \App\Models\User $user */
+        $user = Auth::user();
+        if (!$user || !$user->hasPermission('can_reappro')) {
+            return response()->json([
+                'error' => "Accès refusé. Seul l'administrateur de la boutique (ou un utilisateur disposant d'une autorisation déléguée) peut effectuer un réapprovisionnement."
+            ], 403);
+        }
+
         // Pour le reaprovisionnement des produits:
         $request->validate([
             'produits' => 'Array'
         ]);
 
-        $user = Auth::user();
         $boutique_id = $this->getBoutiqueId();
+        $reapproProcessed = [];
 
         foreach ($request->produits as $produit) {
             $produitId = $produit['produit_id'];
@@ -87,6 +95,12 @@ class ProduitController extends Controller
             $prix_vente = (isset($produit['prix_vente']) && floatval($produit['prix_vente']) > 0)
                 ? floatval($produit['prix_vente'])
                 : ($stock ? floatval($stock->prix_vente) : 0);
+
+            // Si les prix sont différents du stock actuel, vérifier la permission de changement de prix
+            if ($stock && !$user->hasPermission('can_change_prices')) {
+                $prix_achat = (float) $stock->prix_achat;
+                $prix_vente = (float) $stock->prix_vente;
+            }
 
             // L'enregistrement dans la table Inventaire :
             Inventaire::create([
@@ -121,10 +135,17 @@ class ProduitController extends Controller
                     'description' => 'Initialisation stock via réappro'
                 ]);
             }
+
+            $reapproProcessed[] = [
+                'produit_id' => $produitId,
+                'quantite' => $quantite,
+                'prix_achat' => $prix_achat,
+                'prix_vente' => $prix_vente,
+            ];
         }
 
         // SYSCOHADA : Enregistrement comptable du réapprovisionnement (Achats de marchandises)
-        app(\App\Services\ComptaService::class)->enregistrerReappro($request->produits, $boutique_id, $user->id);
+        app(\App\Services\ComptaService::class)->enregistrerReappro($reapproProcessed, $boutique_id, $user->id);
 
         return response()->json(['message' => 'Produit reapprovisionné avec succès'], 201);
     }
@@ -539,16 +560,18 @@ class ProduitController extends Controller
             if (isset($item['isGroup']) && $item['isGroup']) continue;
             if ($item['type'] === 'paiement') continue;
 
-            // Robust access for virtual records (global discounts)
-            $pxAchat = $item['prix_achat'] ?? 0;
-            if ($pxAchat == 0 && isset($item['produit']['stock']['prix_achat'])) {
+            // Robust access for virtual records (global discounts where produit_id is null)
+            $pxAchat = $item['prix_achat'] ?? null;
+            if ($pxAchat === null && !empty($item['produit_id']) && isset($item['produit']['stock']['prix_achat'])) {
                 $pxAchat = $item['produit']['stock']['prix_achat'];
             }
+            $pxAchat = (float) ($pxAchat ?? 0);
 
-            $pxVente = $item['prix_vente'] ?? 0;
-            if ($pxVente == 0 && isset($item['produit']['stock']['prix_vente'])) {
+            $pxVente = $item['prix_vente'] ?? null;
+            if ($pxVente === null && !empty($item['produit_id']) && isset($item['produit']['stock']['prix_vente'])) {
                 $pxVente = $item['produit']['stock']['prix_vente'];
             }
+            $pxVente = (float) ($pxVente ?? 0);
 
             $remise = (float)($item['remise'] ?? 0);
             $surplus = (float)($item['surplus'] ?? 0);
@@ -714,6 +737,10 @@ class ProduitController extends Controller
 
     public function update(Request $request, Produit $produit)
     {
+        /** @var \App\Models\User $user */
+        $user = Auth::user();
+        $canChangePrices = $user && $user->hasPermission('can_change_prices');
+
         // Pour la modification d'un produit (Nom, Description, Categorie)
         $request->validate([
             'nom' => 'string|max:255',
@@ -732,13 +759,45 @@ class ProduitController extends Controller
             'prixAchat' => 'nullable|numeric',
         ]);
 
+        $boutique_id = $this->getBoutiqueId();
+        $stock = Stock::where('produit_id', $produit->id)->where('boutique_id', $boutique_id)->first();
+
+        $reqPrixVente = $request->input('prix_vente') ?? $request->input('prixVente');
+        $reqPrixAchat = $request->input('prix_achat') ?? $request->input('prixAchat');
+        $reqPrixDetail = $request->input('prix_detail');
+        $reqPrixMaster = $request->input('prix_master');
+
+        if (!$canChangePrices) {
+            $priceChanged = false;
+            if ($stock) {
+                if ($reqPrixVente !== null && (float)$reqPrixVente != (float)$stock->prix_vente) {
+                    $priceChanged = true;
+                }
+                if ($reqPrixAchat !== null && (float)$reqPrixAchat != (float)$stock->prix_achat) {
+                    $priceChanged = true;
+                }
+            }
+            if ($reqPrixDetail !== null && (float)$reqPrixDetail != (float)$produit->prix_detail) {
+                $priceChanged = true;
+            }
+            if ($reqPrixMaster !== null && (float)$reqPrixMaster != (float)$produit->prix_master) {
+                $priceChanged = true;
+            }
+
+            if ($priceChanged) {
+                return response()->json([
+                    'error' => "Accès refusé. Seul l'administrateur de la boutique (ou un utilisateur disposant d'une autorisation déléguée) peut modifier les prix des produits."
+                ], 403);
+            }
+        }
+
         $data = [
             'nom' => $request->input('nom', $produit->nom),
             'reference' => $request->input('reference', $produit->reference),
             'description' => $request->input('description', $produit->description),
             'categorie_id' => $request->input('categorie_id', $produit->categorie_id),
-            'prix_detail' => $request->input('prix_detail', $produit->prix_detail),
-            'prix_master' => $request->input('prix_master', $produit->prix_master),
+            'prix_detail' => $canChangePrices ? $request->input('prix_detail', $produit->prix_detail) : $produit->prix_detail,
+            'prix_master' => $canChangePrices ? $request->input('prix_master', $produit->prix_master) : $produit->prix_master,
             'config' => $request->has('config') ? json_decode($request->input('config'), true) : $produit->config,
         ];
 
@@ -750,18 +809,13 @@ class ProduitController extends Controller
 
         $produit->update($data);
 
-        // Mise à jour du stock pour la boutique actuelle
-        $boutique_id = $this->getBoutiqueId();
-        
         // Handle snake_case or camelCase inputs
-        $prix_vente = $request->input('prix_vente') ?? $request->input('prixVente');
-        $prix_achat = $request->input('prix_achat') ?? $request->input('prixAchat');
+        $prix_vente = $canChangePrices ? $reqPrixVente : ($stock ? $stock->prix_vente : null);
+        $prix_achat = $canChangePrices ? $reqPrixAchat : ($stock ? $stock->prix_achat : null);
         $quantite = $request->input('quantite');
 
         // Only update stock if relevant fields are present
         if ($prix_vente !== null || $prix_achat !== null || $quantite !== null) {
-            $stock = Stock::where('produit_id', $produit->id)->where('boutique_id', $boutique_id)->first();
-            
             if ($stock) {
                 $stock->update([
                     'prix_vente' => $prix_vente ?? $stock->prix_vente,

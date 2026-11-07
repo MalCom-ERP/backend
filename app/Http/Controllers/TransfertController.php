@@ -407,8 +407,21 @@ class TransfertController extends Controller
                 'prix_achat' => $stock->prix_achat,
                 'prix_vente' => $stock->prix_vente,
                 'description' => "Inventaire Physique : $motif (Écart : $signe unités) " . ($request->note ? "— " . $request->note : ""),
-                'date' => now()->format('Y-m-d H:i:s')
+                'date' => now()->format('Y-m-d')
             ]);
+
+            // SYSCOHADA : Écriture d'ajustement de stock (603 / 311)
+            $montantAjustement = abs($ecart) * (float)($stock->prix_achat ?? 0);
+            if ($montantAjustement > 0) {
+                $sens = $ecart < 0 ? 'perte' : 'surplus';
+                app(\App\Services\ComptaService::class)->enregistrerAjustementStock(
+                    $boutiqueId,
+                    "Ajustement inventaire {$produit->nom} ({$motif})",
+                    $montantAjustement,
+                    $sens,
+                    $user->id
+                );
+            }
 
             DB::commit();
 

@@ -15,7 +15,8 @@ class DatabaseSeeder extends Seeder
     {
         $this->call([
             SuperAdminSeeder::class,
-            NatureSeeder::class
+            NatureSeeder::class,
+            SyscohadaPlanComptableSeeder::class,
         ]);
 
         // User::factory(10)->create();

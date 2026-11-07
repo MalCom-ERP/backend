@@ -111,7 +111,7 @@ class ExpenseController extends Controller
 
         try {
             $comptaService = app(\App\Services\ComptaService::class);
-            $comptaService->enregistrerAnnulationDepense($expense);
+            // Supprimer l'écriture initiale de cette dépense avant d'enregistrer la nouvelle version
             \App\Models\EcritureComptable::where('source_type', 'Expense')
                 ->where('source_id', $expense->id)
                 ->delete();

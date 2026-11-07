@@ -146,6 +146,13 @@ class VenteController extends Controller
                         $stock->save();
                     }
 
+                    // Récupérer le prix d'achat historique enregistré lors de la vente initiale
+                    $histPrixAchat = Inventaire::where('vente_id', $vente->id)
+                        ->where('produit_id', $produitId)
+                        ->where('type', 'retrait')
+                        ->value('prix_achat');
+                    $prixAchatHistorique = $histPrixAchat !== null ? (float)$histPrixAchat : ($stock ? (float)$stock->prix_achat : 0);
+
                     $remiseAudit = $diffRemise + ($diffPrix * $nouvelleQte); // Correction for profit impact
                     $itemSurplusUnit = (float) ($detailVente->surplus_unitaire ?? 0);
 
@@ -156,12 +163,12 @@ class VenteController extends Controller
                         'vente_id' => $vente->id,
                         'quantite' => abs($difference),
                         'type' => $difference >= 0 ? 'ajout' : 'retrait',
-                        'prix_achat' => $stock ? $stock->prix_achat : 0,
+                        'prix_achat' => $prixAchatHistorique,
                         'prix_vente' => $nouveauPrixU ?? $detailVente->prix_unitaire,
                         'remise' => $remiseAudit, 
                         'surplus' => max(0, $difference * $itemSurplusUnit),
                         'description' => ($difference > 0 ? 'Retour Client (Audit)' : ($difference < 0 ? 'Ajustement Vente' : 'Correction Prix/Remise')) . ' sur Vente #' . $venteId,
-                        'date' => now()
+                        'date' => now()->format('Y-m-d')
                     ]);
                 }
 
@@ -219,19 +226,23 @@ class VenteController extends Controller
             $nouveauSurplusTotal = (float) DetailVente::where('vente_id', $venteId)->sum('surplus');
 
             if ($nouveauMontantBrut <= 0) {
+                // SYSCOHADA : Contre-passation de la vente totalement retournée / annulée AVANT remise à zéro
+                app(\App\Services\ComptaService::class)->enregistrerAnnulationVente($vente);
+
                 // Total cancellation logic...
                 if ($vente->type_paiement == 'credit') {
                     $credits = PaiementCredit::where('vente_id', $venteId)->get();
-                    $montant_total_paye = $credits->sum('montant');
+                    $montant_total_paye = (float)$credits->sum('montant') + (float)($vente->montant_avance ?? 0);
                     if ($montant_total_paye > 0) {
-                        Expense::create([
+                        $refundExpense = Expense::create([
                             'type' => "Remboursement Retour",
                             'boutique_id' => $boutique_id,
                             'user_id' => $user->id,
                             'montant' => $montant_total_paye,
-                            'date' => now(),
+                            'date' => now()->format('Y-m-d'),
                             'description' => "Remboursement suite au retour complet de la vente #" . $venteId,
                         ]);
+                        app(\App\Services\ComptaService::class)->enregistrerDepense($refundExpense);
                     }
                     $vente->montant_restant = 0;
                     $vente->statut = 'Credit annule';
@@ -242,9 +253,6 @@ class VenteController extends Controller
                 $vente->remise = 0;
                 $vente->surplus = 0;
                 $vente->save();
-
-                // SYSCOHADA : Contre-passation de la vente totalement retournée / annulée
-                app(\App\Services\ComptaService::class)->enregistrerAnnulationVente($vente);
             } else {
                 if ($vente->type_paiement == 'credit') {
                     $ancienNet = $vente->montant_total;
@@ -253,14 +261,15 @@ class VenteController extends Controller
 
                     if ($valeurRetour > $ancienRestant) {
                         $surplusRemb = $valeurRetour - $ancienRestant;
-                        Expense::create([
+                        $refundExpense = Expense::create([
                             'type' => "Remboursement Retour",
                             'boutique_id' => $boutique_id,
                             'user_id' => $user->id,
                             'montant' => $surplusRemb,
-                            'date' => now(),
+                            'date' => now()->format('Y-m-d'),
                             'description' => "Remboursement surplus audit sur vente #" . $venteId,
                         ]);
+                        app(\App\Services\ComptaService::class)->enregistrerDepense($refundExpense);
                         $vente->montant_restant = 0;
                         $vente->statut = 'payee';
                     } else {
@@ -316,6 +325,12 @@ class VenteController extends Controller
                 $stock->save();
             }
 
+            $histPrixAchat = Inventaire::where('vente_id', $vente->id)
+                ->where('produit_id', $detail->produit_id)
+                ->where('type', 'retrait')
+                ->value('prix_achat');
+            $prixAchatHistorique = $histPrixAchat !== null ? (float)$histPrixAchat : ($stock ? (float)$stock->prix_achat : 0);
+
             Inventaire::create([
                 'produit_id' => $detail->produit_id,
                 'boutique_id' => $boutique_id,
@@ -323,13 +338,35 @@ class VenteController extends Controller
                 'vente_id' => $vente->id,
                 'quantite' => $detail->quantite,
                 'type' => 'ajout',
-                'prix_achat' => $stock ? $stock->prix_achat : 0,
+                'prix_achat' => $prixAchatHistorique,
                 'prix_vente' => $detail->prix_unitaire,
                 'remise' => 0, // Reset remise on total cancellation
                 'surplus' => $detail->surplus ?? 0,
                 'description' => 'Annulation de Vente #' . $vente->id,
-                'date' => now()
+                'date' => now()->format('Y-m-d')
             ]);
+        }
+
+        // SYSCOHADA : Contre-passation de la vente annulée AVANT remise à zéro des montants
+        app(\App\Services\ComptaService::class)->enregistrerAnnulationVente($vente);
+
+        if ($vente->type_paiement === 'credit') {
+            $credits = PaiementCredit::where('vente_id', $vente->id)
+                ->where('boutique_id', $boutique_id)
+                ->get();
+            $montant_total_paye = (float)$credits->sum('montant') + (float)($vente->montant_avance ?? 0);
+            if ($montant_total_paye > 0) {
+                $refundExpense = Expense::create([
+                    'type' => "Remboursement Retour",
+                    'boutique_id' => $boutique_id,
+                    'user_id' => Auth::id() ?? $vente->user_id,
+                    'montant' => $montant_total_paye,
+                    'date' => now()->format('Y-m-d'),
+                    'description' => "Remboursement suite à l'annulation de la vente à crédit #" . $vente->id,
+                ]);
+                app(\App\Services\ComptaService::class)->enregistrerDepense($refundExpense);
+            }
+            $vente->montant_restant = 0;
         }
 
         $vente->statut = 'annulee';
@@ -337,9 +374,6 @@ class VenteController extends Controller
         $vente->remise = 0;
         $vente->surplus = 0;
         $vente->save();
-
-        // SYSCOHADA : Contre-passation de la vente annulée
-        app(\App\Services\ComptaService::class)->enregistrerAnnulationVente($vente);
 
         return response()->json(['message' => 'Vente annulée avec succès'], 200);
     }
@@ -372,6 +406,12 @@ class VenteController extends Controller
                     $stock->save();
                 }
 
+                $histPrixAchat = Inventaire::where('vente_id', $vente->id)
+                    ->where('produit_id', $detail->produit_id)
+                    ->where('type', 'retrait')
+                    ->value('prix_achat');
+                $prixAchatHistorique = $histPrixAchat !== null ? (float)$histPrixAchat : ($stock ? (float)$stock->prix_achat : 0);
+
                 $produit = Produit::find($detail->produit_id);
                 $lineRemise = (float)($detail->remise ?? 0);
                 $sumLineRemises += $lineRemise;
@@ -383,12 +423,12 @@ class VenteController extends Controller
                     'vente_id' => $vente->id,
                     'quantite' => $detail->quantite,
                     'type' => 'ajout',
-                    'prix_achat' => $stock ? $stock->prix_achat : 0,
+                    'prix_achat' => $prixAchatHistorique,
                     'prix_vente' => $detail->prix_unitaire,
                     'remise' => $lineRemise, // FIXED: Correct line reduction
                     'surplus' => $detail->surplus ?? 0,
                     'description' => 'Annulation de Vente #' . $vente->id . ' (' . ($produit ? $produit->nom : 'Produit inconnu') . ')',
-                    'date' => now()
+                    'date' => now()->format('Y-m-d')
                 ]);
             }
 
@@ -407,9 +447,12 @@ class VenteController extends Controller
                     'remise' => $extraReduction,
                     'surplus' => 0,
                     'description' => 'Annulation Remise Globale (Vente #' . $vente->id . ')',
-                    'date' => now()
+                    'date' => now()->format('Y-m-d')
                 ]);
             }
+
+            // SYSCOHADA : Contre-passation de la vente annulée AVANT remise à zéro des montants
+            app(\App\Services\ComptaService::class)->enregistrerAnnulationVente($vente);
 
             // Gestion des paiements si c'est une vente à crédit
             if ($vente->type_paiement === 'credit') {
@@ -417,17 +460,18 @@ class VenteController extends Controller
                     ->where('boutique_id', $boutique_id)
                     ->get();
                 
-                $montant_total_paye = $credits->sum('montant');
+                $montant_total_paye = (float)$credits->sum('montant') + (float)($vente->montant_avance ?? 0);
                 
                 if ($montant_total_paye > 0) {
-                    Expense::create([
+                    $refundExpense = Expense::create([
                         'type' => "Remboursement Retour",
                         'boutique_id' => $boutique_id,
                         'user_id' => $user->id,
                         'montant' => $montant_total_paye,
-                        'date' => now(),
+                        'date' => now()->format('Y-m-d'),
                         'description' => "Remboursement suite à l'annulation de la vente à crédit #" . $vente->id,
                     ]);
+                    app(\App\Services\ComptaService::class)->enregistrerDepense($refundExpense);
                 }
                 $vente->montant_restant = 0;
             }
@@ -437,9 +481,6 @@ class VenteController extends Controller
             $vente->surplus = 0;
             $vente->statut = 'annulee';
             $vente->save();
-
-            // SYSCOHADA : Contre-passation de la vente annulée
-            app(\App\Services\ComptaService::class)->enregistrerAnnulationVente($vente);
 
             DB::commit();
             return response()->json(["message" => "Vente Annulée avec succès"], 200);
@@ -489,6 +530,14 @@ class VenteController extends Controller
 
     public function chiffre(Request $request)
     {
+        /** @var \App\Models\User $user */
+        $user = Auth::user();
+        if (!$user || !$user->hasPermission('can_view_ca')) {
+            return response()->json([
+                'error' => "Accès refusé. Vous n'êtes pas autorisé à consulter le Chiffre d'Affaires."
+            ], 403);
+        }
+
         $boutique_id = $this->getBoutiqueId();
 
         // 1. All created years for this boutique from Annees table
@@ -565,8 +614,8 @@ class VenteController extends Controller
 
         foreach ($mouvements as $mov) {
             $m = (int)\Carbon\Carbon::parse($mov->date)->month;
-            $pxA = $mov->prix_achat ?? ($mov->produit->stock->prix_achat ?? 0);
-            $pxV = $mov->prix_vente ?? ($mov->produit->stock->prix_vente ?? 0);
+            $pxA = $mov->prix_achat !== null ? (float)$mov->prix_achat : ($mov->produit_id ? (float)($mov->produit->stock->prix_achat ?? 0) : 0);
+            $pxV = $mov->prix_vente !== null ? (float)$mov->prix_vente : ($mov->produit_id ? (float)($mov->produit->stock->prix_vente ?? 0) : 0);
             
             if ($mov->type === 'retrait') {
                 $statsMensuelles[$m]['ca'] += ($mov->quantite * $pxV);
@@ -579,24 +628,26 @@ class VenteController extends Controller
             }
         }
 
-        // Remises query with matching date scope
-        $ventesAvecRemiseQuery = Vente::where('boutique_id', $boutique_id)
-            ->where('remise', '>', 0)
+        // Le Chiffre d'Affaires net mensuel doit refléter fidèlement le montant_total net des ventes validées
+        $ventesValidesQuery = Vente::where('boutique_id', $boutique_id)
             ->whereIn('statut', ['validee', 'payee', 'credit']);
 
         if ($dateDebut && $dateFin) {
-            $ventesAvecRemiseQuery->whereBetween('date_vente', [$dateDebut, $dateFin]);
+            $ventesValidesQuery->whereBetween('date_vente', [$dateDebut, $dateFin]);
         } elseif ($mois) {
-            $ventesAvecRemiseQuery->whereYear('date_vente', $targetYear)->whereMonth('date_vente', (int)$mois);
+            $ventesValidesQuery->whereYear('date_vente', $targetYear)->whereMonth('date_vente', (int)$mois);
         } else {
-            $ventesAvecRemiseQuery->whereYear('date_vente', $targetYear);
+            $ventesValidesQuery->whereYear('date_vente', $targetYear);
         }
 
-        $ventesAvecRemise = $ventesAvecRemiseQuery->get();
-
-        foreach ($ventesAvecRemise as $v) {
+        $ventesValides = $ventesValidesQuery->get();
+        // Réinitialiser 'ca' pour l'aligner exactement sur la somme des ventes nettes (montant_total)
+        for ($i = 1; $i <= 12; $i++) {
+            $statsMensuelles[$i]['ca'] = 0;
+        }
+        foreach ($ventesValides as $v) {
             $m = (int)\Carbon\Carbon::parse($v->date_vente)->month;
-            $statsMensuelles[$m]['ca'] -= (float)$v->remise;
+            $statsMensuelles[$m]['ca'] += (float)$v->montant_total;
         }
 
         $moisGlobal = array_values($statsMensuelles);
@@ -682,6 +733,14 @@ class VenteController extends Controller
 
     public function getVenteByAnnee(Request $request, $annee)
     {
+        /** @var \App\Models\User $user */
+        $user = Auth::user();
+        if (!$user || !$user->hasPermission('can_view_ca')) {
+            return response()->json([
+                'error' => "Accès refusé. Vous n'êtes pas autorisé à consulter le Chiffre d'Affaires."
+            ], 403);
+        }
+
         $boutique_id = $this->getBoutiqueId();
         $targetYear = (int)$annee;
 
@@ -719,8 +778,8 @@ class VenteController extends Controller
 
         foreach ($mouvements as $mov) {
             $m = (int)\Carbon\Carbon::parse($mov->date)->month;
-            $pxA = $mov->prix_achat ?? ($mov->produit->stock->prix_achat ?? 0);
-            $pxV = $mov->prix_vente ?? ($mov->produit->stock->prix_vente ?? 0);
+            $pxA = $mov->prix_achat !== null ? (float)$mov->prix_achat : ($mov->produit_id ? (float)($mov->produit->stock->prix_achat ?? 0) : 0);
+            $pxV = $mov->prix_vente !== null ? (float)$mov->prix_vente : ($mov->produit_id ? (float)($mov->produit->stock->prix_vente ?? 0) : 0);
             
             if ($mov->type === 'retrait') {
                 $statsMensuelles[$m]['ca'] += ($mov->quantite * $pxV);
@@ -733,23 +792,24 @@ class VenteController extends Controller
             }
         }
 
-        $ventesAvecRemiseQuery = Vente::where('boutique_id', $boutique_id)
-            ->where('remise', '>', 0)
+        $ventesValidesQuery = Vente::where('boutique_id', $boutique_id)
             ->whereIn('statut', ['validee', 'payee', 'credit']);
 
         if ($dateDebut && $dateFin) {
-            $ventesAvecRemiseQuery->whereBetween('date_vente', [$dateDebut, $dateFin]);
+            $ventesValidesQuery->whereBetween('date_vente', [$dateDebut, $dateFin]);
         } elseif ($mois) {
-            $ventesAvecRemiseQuery->whereYear('date_vente', $targetYear)->whereMonth('date_vente', (int)$mois);
+            $ventesValidesQuery->whereYear('date_vente', $targetYear)->whereMonth('date_vente', (int)$mois);
         } else {
-            $ventesAvecRemiseQuery->whereYear('date_vente', $targetYear);
+            $ventesValidesQuery->whereYear('date_vente', $targetYear);
         }
 
-        $ventesAvecRemise = $ventesAvecRemiseQuery->get();
-
-        foreach ($ventesAvecRemise as $v) {
+        $ventesValides = $ventesValidesQuery->get();
+        for ($i = 1; $i <= 12; $i++) {
+            $statsMensuelles[$i]['ca'] = 0;
+        }
+        foreach ($ventesValides as $v) {
             $m = (int)\Carbon\Carbon::parse($v->date_vente)->month;
-            $statsMensuelles[$m]['ca'] -= (float)$v->remise;
+            $statsMensuelles[$m]['ca'] += (float)$v->montant_total;
         }
 
         $moisGlobal = array_values($statsMensuelles);
@@ -1082,8 +1142,9 @@ class VenteController extends Controller
             $vente->boutique_id = $boutique_id;
             $vente->user_id = $user->id;
             $rawType = $is_proforma ? 'proforma' : ($request->type_paiement ?? 'contant');
-            $vente->type_paiement = $rawType;
-            $vente->moyen_paiement = $request->input('moyen_paiement', ($rawType === 'credit' ? 'credit' : ($rawType === 'proforma' ? 'proforma' : $rawType)));
+            $normalizedType = in_array($rawType, ['proforma', 'credit', 'contant']) ? $rawType : 'contant';
+            $vente->type_paiement = $normalizedType;
+            $vente->moyen_paiement = $request->input('moyen_paiement', ($normalizedType === 'credit' ? 'credit' : ($normalizedType === 'proforma' ? 'proforma' : $rawType)));
             $vente->montant_recu = $request->input('montant_recu', 0);
             $vente->monnaie_rendue = $request->input('monnaie_rendue', 0);
             $vente->montant_avance = $request->montant_avance ?? 0;
@@ -1282,13 +1343,14 @@ class VenteController extends Controller
                 }
 
                 $typePaiement = $vData['type_paiement'] ?? 'contant';
+                $normalizedType = in_array($typePaiement, ['proforma', 'credit', 'contant']) ? $typePaiement : 'contant';
                 $vente = new Vente();
                 $vente->client_id = $client_id;
                 $vente->boutique_id = $boutique_id;
                 $vente->user_id = $user->id;
                 $vente->montant_total = $vData['montant_total'];
-                $vente->type_paiement = $typePaiement;
-                $vente->moyen_paiement = $vData['moyen_paiement'] ?? ($typePaiement === 'credit' ? 'credit' : $typePaiement);
+                $vente->type_paiement = $normalizedType;
+                $vente->moyen_paiement = $vData['moyen_paiement'] ?? ($normalizedType === 'credit' ? 'credit' : $typePaiement);
                 $vente->montant_recu = $vData['montant_recu'] ?? 0;
                 $vente->monnaie_rendue = $vData['monnaie_rendue'] ?? 0;
                 $vente->montant_avance = $vData['montant_avance'] ?? 0;
@@ -1427,6 +1489,7 @@ class VenteController extends Controller
                 $stock->save();
 
                 $lineRemise = (float)($detail->remise ?? 0);
+                $lineSurplus = (float)($detail->surplus ?? 0);
 
                 // Log Inventory
                 Inventaire::create([
@@ -1439,14 +1502,16 @@ class VenteController extends Controller
                     'prix_achat' => $stock ? $stock->prix_achat : 0,
                     'prix_vente' => $detail->prix_unitaire,
                     'remise' => $lineRemise,
+                    'surplus' => $lineSurplus,
                     'description' => 'Conversion Pro-forma #' . $vente->id . ' vers Vente',
                     'date' => now()->format('Y-m-d')
                 ]);
             }
 
             // Virtual record for extra reduction in conversion too
-            $totalLineRemises = $vente->detailVentes->sum('remise');
-            $venteRemise = (float)$request->input('remise', $totalLineRemises);
+            $totalLineRemises = (float)$vente->detailVentes->sum('remise');
+            $totalBrut = (float)$vente->detailVentes->sum('montant');
+            $venteRemise = $request->has('remise') ? (float)$request->input('remise') : (float)$vente->remise;
             $extraReduction = $venteRemise - $totalLineRemises;
             
             if ($extraReduction != 0) {
@@ -1460,6 +1525,7 @@ class VenteController extends Controller
                     'prix_achat' => 0,
                     'prix_vente' => 0,
                     'remise' => $extraReduction,
+                    'surplus' => 0,
                     'description' => 'Remise Globale (Conversion pro-forma #' . $vente->id . ')',
                     'date' => now()->format('Y-m-d')
                 ]);
@@ -1467,14 +1533,17 @@ class VenteController extends Controller
 
             // 2. Update Vente Identity
             $rawType = $request->input('type_paiement', 'contant');
-            $vente->type_paiement = $rawType;
+            $normalizedType = in_array($rawType, ['proforma', 'credit', 'contant']) ? $rawType : 'contant';
+            $vente->type_paiement = $normalizedType;
             $vente->moyen_paiement = $request->input('moyen_paiement', $rawType);
             $vente->montant_recu = $request->input('montant_recu', 0);
             $vente->monnaie_rendue = $request->input('monnaie_rendue', 0);
-            $vente->remise = $vente->detailVentes->sum('remise');
+            $vente->remise = $venteRemise;
+            $vente->surplus = (float)$vente->detailVentes->sum('surplus');
+            $vente->montant_total = max(0, $totalBrut - $venteRemise);
             $vente->montant_avance = $montant_avance;
-            $vente->statut = ($rawType === 'credit') ? 'credit' : 'payee';
-            $vente->montant_restant = ($rawType === 'credit')
+            $vente->statut = ($normalizedType === 'credit') ? 'credit' : 'payee';
+            $vente->montant_restant = ($normalizedType === 'credit')
                 ? ($vente->montant_total - $montant_avance)
                 : 0;
             $vente->date_vente = now()->format('Y-m-d');

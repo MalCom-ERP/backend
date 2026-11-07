@@ -65,6 +65,7 @@ class AuthController extends Controller
         return response()->json([
             'user' => $user,
             'user_role' => $user->role,
+            'permissions' => $user->permissions ?? [],
             'boutique_id' => $user->boutique_id ?: (\App\Models\Boutique::first()?->id),
             'date_expiration' => $boutique?->date_expiration_licence,
             'date_expiration_formatee' => $boutique?->date_expiration_licence ? \Carbon\Carbon::parse($boutique->date_expiration_licence)->format('d/m/Y') : null,
@@ -108,12 +109,23 @@ class AuthController extends Controller
 
     public function index()
     {
+        $currentUserId = Auth::id();
         if (Auth::user()->role === 'admin') {
             $boutiqueId = request()->header('X-Boutique-Id') ?: Auth::user()->boutique_id;
-            return response()->json(User::where('boutique_id', $boutiqueId)->get(), 200);
+            return response()->json(
+                User::where('boutique_id', $boutiqueId)
+                    ->where('id', '!=', $currentUserId)
+                    ->get(),
+                200
+            );
         }
 
-        return response()->json(User::where('boutique_id', Auth::user()->boutique_id)->get(), 200);
+        return response()->json(
+            User::where('boutique_id', Auth::user()->boutique_id)
+                ->where('id', '!=', $currentUserId)
+                ->get(),
+            200
+        );
     }
 
     public function showUser($id)
@@ -128,15 +140,19 @@ class AuthController extends Controller
             'email' => 'required|string|unique:users,email',
             'password' => 'required|string|min:6',
             'role' => 'required|string',
-            'boutique_id' => 'required|integer|exists:boutiques,id'
+            'boutique_id' => 'required|integer|exists:boutiques,id',
+            'permissions' => 'nullable|array'
         ]);
+
+        $permissions = $request->input('permissions', null);
 
         $user = User::create([
             'name' => $fields['name'],
             'email' => $fields['email'],
             'password' => $fields['password'], 
             'role' => $fields['role'],
-            'boutique_id' => $fields['boutique_id']
+            'boutique_id' => $fields['boutique_id'],
+            'permissions' => is_array($permissions) ? $permissions : null,
         ]);
 
         return response()->json($user, 200);
@@ -149,13 +165,18 @@ class AuthController extends Controller
             'name' => 'required|string',
             'email' => 'required|string|unique:users,email,' . $id,
             'role' => 'required|string',
-            'boutique_id' => 'required|integer|exists:boutiques,id'
+            'boutique_id' => 'required|integer|exists:boutiques,id',
+            'permissions' => 'nullable|array'
         ]);
 
         $user->name = $fields['name'];
         $user->email = $fields['email'];
         $user->role = $fields['role'];
         $user->boutique_id = $fields['boutique_id'];
+
+        if ($request->has('permissions')) {
+            $user->permissions = is_array($request->permissions) ? $request->permissions : null;
+        }
 
         if (request()->has('is_active')) {
             $user->is_active = $request->is_active;

@@ -9,17 +9,35 @@ use App\Models\LigneEcriture;
 use App\Models\Vente;
 use App\Models\PaiementCredit;
 use App\Models\Expense;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 
 class ComptaService
 {
+    protected static bool $seededChecked = false;
+
+    /**
+     * S'assurer que le plan comptable et les journaux SYSCOHADA sont initialisés en base
+     */
+    public function ensureSyscohadaSeeded(): void
+    {
+        if (self::$seededChecked) {
+            return;
+        }
+        if (CompteComptable::whereNull('boutique_id')->count() === 0 || JournalComptable::whereNull('boutique_id')->count() === 0) {
+            app(\Database\Seeders\SyscohadaPlanComptableSeeder::class)->run();
+        }
+        self::$seededChecked = true;
+    }
+
     /**
      * Trouver ou récupérer un compte par son numéro (cherche d'abord en local, sinon compte système)
      */
     public function getCompte(string $numero, ?int $boutiqueId = null): ?CompteComptable
     {
+        $this->ensureSyscohadaSeeded();
         $clean = rtrim($numero, '0');
         $candidates = array_unique(array_filter([
             $numero,
@@ -32,11 +50,35 @@ class ComptaService
             substr($numero, 0, 3)
         ]));
 
-        $compte = null;
+        // 1. Rechercher d'abord une correspondance exacte (ou préfixe exact + zéros comme 701 -> 701000)
+        $exactCandidates = array_unique(array_filter([
+            $numero,
+            $numero . '000',
+            $numero . '00',
+            $clean . '000',
+        ]));
+
         if ($boutiqueId) {
+            $compte = CompteComptable::whereIn('numero', $exactCandidates)
+                ->where('boutique_id', $boutiqueId)
+                ->where('is_active', true)
+                ->orderByRaw('LENGTH(numero) ASC, numero ASC')
+                ->first();
+        }
+        if (!$compte) {
+            $compte = CompteComptable::whereIn('numero', $exactCandidates)
+                ->whereNull('boutique_id')
+                ->where('is_active', true)
+                ->orderByRaw('LENGTH(numero) ASC, numero ASC')
+                ->first();
+        }
+
+        // 2. Fallback sur les candidats élargis si non trouvé
+        if (!$compte && $boutiqueId) {
             $compte = CompteComptable::whereIn('numero', $candidates)
                 ->where('boutique_id', $boutiqueId)
                 ->where('is_active', true)
+                ->orderByRaw('numero ASC')
                 ->first();
         }
 
@@ -44,6 +86,7 @@ class ComptaService
             $compte = CompteComptable::whereIn('numero', $candidates)
                 ->whereNull('boutique_id')
                 ->where('is_active', true)
+                ->orderByRaw('numero ASC')
                 ->first();
         }
 
@@ -55,6 +98,7 @@ class ComptaService
      */
     public function getJournal(string $code, ?int $boutiqueId = null): ?JournalComptable
     {
+        $this->ensureSyscohadaSeeded();
         $journal = null;
         if ($boutiqueId) {
             $journal = JournalComptable::where('code', $code)
