@@ -402,5 +402,226 @@ class SuperAdminController extends Controller
 
         return back()->with('success', "La clé de licence « {$cle} » a été définitivement supprimée.");
     }
+
+    /**
+     * Centre de Sauvegardes Automatiques & Dumps SQL par Compte Principal / Boutique
+     */
+    public function backupsIndex()
+    {
+        $backupController = app(\App\Http\Controllers\BackupController::class);
+
+        // Récupérer tous les Comptes Principaux (admins propriétaires de boutiques)
+        $ownerIds = Boutique::whereNotNull('user_id')->pluck('user_id')->unique()->toArray();
+        $principalAccounts = User::whereIn('id', $ownerIds)
+            ->orWhere('role', 'admin')
+            ->orderBy('name')
+            ->get()
+            ->unique('id')
+            ->map(function (User $user) use ($backupController) {
+                $boutiqueIds = $backupController->getBoutiqueIdsForAccount($user);
+                $boutiques = Boutique::with(['nature', 'parent'])
+                    ->whereIn('id', $boutiqueIds)
+                    ->orderByRaw('CASE WHEN parent_id IS NULL THEN 0 ELSE 1 END')
+                    ->get();
+
+                $ventesCount = !empty($boutiqueIds)
+                    ? DB::table('ventes')->whereIn('boutique_id', $boutiqueIds)->count()
+                    : 0;
+                $produitsCount = !empty($boutiqueIds)
+                    ? DB::table('stocks')->whereIn('boutique_id', $boutiqueIds)->count()
+                    : 0;
+                $usersCount = !empty($boutiqueIds)
+                    ? DB::table('users')->whereIn('boutique_id', $boutiqueIds)->orWhere('id', $user->id)->count()
+                    : 1;
+
+                // Chercher les sauvegardes automatiques existantes sur le disque pour ce compte
+                $slug = \Illuminate\Support\Str::slug($user->name ?: 'compte-' . $user->id);
+                $accountDir = storage_path("app/backups/accounts/account_{$user->id}_{$slug}");
+                $savedBackups = [];
+                if (\Illuminate\Support\Facades\File::isDirectory($accountDir)) {
+                    foreach (\Illuminate\Support\Facades\File::files($accountDir) as $f) {
+                        $savedBackups[] = [
+                            'filename' => $f->getFilename(),
+                            'relative_path' => "accounts/account_{$user->id}_{$slug}/" . $f->getFilename(),
+                            'size_kb' => round($f->getSize() / 1024, 1),
+                            'date' => Carbon::createFromTimestamp($f->getMTime())->format('d/m/Y H:i'),
+                            'timestamp' => $f->getMTime(),
+                        ];
+                    }
+                    usort($savedBackups, fn($a, $b) => $b['timestamp'] <=> $a['timestamp']);
+                }
+
+                return (object)[
+                    'user' => $user,
+                    'boutiques' => $boutiques,
+                    'boutiques_count' => $boutiques->count(),
+                    'ventes_count' => $ventesCount,
+                    'produits_count' => $produitsCount,
+                    'users_count' => $usersCount,
+                    'saved_backups' => $savedBackups,
+                    'latest_backup' => $savedBackups[0] ?? null,
+                ];
+            })
+            ->filter(fn($acc) => $acc->boutiques_count > 0 || $acc->user->role === 'admin')
+            ->values();
+
+        // Sauvegardes globales sur disque
+        $globalDir = storage_path('app/backups/global');
+        $globalBackups = [];
+        if (\Illuminate\Support\Facades\File::isDirectory($globalDir)) {
+            foreach (\Illuminate\Support\Facades\File::files($globalDir) as $f) {
+                $globalBackups[] = [
+                    'filename' => $f->getFilename(),
+                    'relative_path' => 'global/' . $f->getFilename(),
+                    'size_kb' => round($f->getSize() / 1024, 1),
+                    'date' => Carbon::createFromTimestamp($f->getMTime())->format('d/m/Y H:i'),
+                    'timestamp' => $f->getMTime(),
+                ];
+            }
+            usort($globalBackups, fn($a, $b) => $b['timestamp'] <=> $a['timestamp']);
+        }
+
+        // Métadonnées de la dernière sauvegarde planifiée
+        $lastBackupMeta = null;
+        $metaPath = storage_path('app/backups/last_backup.json');
+        if (\Illuminate\Support\Facades\File::exists($metaPath)) {
+            $lastBackupMeta = json_decode(\Illuminate\Support\Facades\File::get($metaPath), true);
+        }
+
+        return view('admin.backups.index', compact('principalAccounts', 'globalBackups', 'lastBackupMeta'));
+    }
+
+    /**
+     * Déclenche immédiatement la sauvegarde automatique de tous les Comptes Principaux et de la base globale.
+     */
+    public function backupsRunNow()
+    {
+        \Illuminate\Support\Facades\Artisan::call('backup:accounts', ['--retention' => 14]);
+        return back()->with('success', 'Sauvegarde complète de tous les Comptes Principaux et de la base globale générée avec succès !');
+    }
+
+    /**
+     * Télécharge en direct un Dump SQL intégral de toute la base de données.
+     */
+    public function dumpGlobal()
+    {
+        @ini_set('memory_limit', '512M');
+        @set_time_limit(300);
+
+        $backupController = app(\App\Http\Controllers\BackupController::class);
+        $dbName = config('database.connections.mysql.database') ?: 'malcom_prod';
+        $timestamp = Carbon::now()->format('Y-m-d_H-i-s');
+        $filename = "dump_global_malcom_{$dbName}_{$timestamp}.sql";
+
+        return response()->stream(function () use ($backupController) {
+            $out = fopen('php://output', 'w');
+            $backupController->writeFullDatabaseSqlDump($out);
+            fclose($out);
+        }, 200, [
+            'Content-Type' => 'application/sql; charset=utf-8',
+            'Content-Disposition' => "attachment; filename=\"{$filename}\"",
+            'Pragma' => 'no-cache',
+        ]);
+    }
+
+    /**
+     * Télécharge en direct le Dump SQL complet d'un Compte Principal (incluant sa boutique principale et toutes ses filiales).
+     */
+    public function dumpAccount(User $user)
+    {
+        @ini_set('memory_limit', '512M');
+        @set_time_limit(300);
+
+        $backupController = app(\App\Http\Controllers\BackupController::class);
+        $boutiqueIds = $backupController->getBoutiqueIdsForAccount($user);
+        $slug = \Illuminate\Support\Str::slug($user->name ?: 'compte-' . $user->id);
+        $timestamp = Carbon::now()->format('Y-m-d_H-i-s');
+        $filename = "dump_compte_principal_{$slug}_{$timestamp}.sql";
+
+        return response()->stream(function () use ($backupController, $user, $boutiqueIds) {
+            $out = fopen('php://output', 'w');
+            $backupController->writeScopedBoutiquesSqlDump(
+                $out,
+                $boutiqueIds,
+                "COMPTE PRINCIPAL #{$user->id} : {$user->name} ({$user->email})",
+                $user->id
+            );
+            fclose($out);
+        }, 200, [
+            'Content-Type' => 'application/sql; charset=utf-8',
+            'Content-Disposition' => "attachment; filename=\"{$filename}\"",
+            'Pragma' => 'no-cache',
+        ]);
+    }
+
+    /**
+     * Télécharge en direct le Dump SQL d'une boutique spécifique (ou avec toutes ses filiales si ?groupe=1).
+     */
+    public function dumpBoutique(Request $request, Boutique $boutique)
+    {
+        @ini_set('memory_limit', '512M');
+        @set_time_limit(300);
+
+        $includeGroup = $request->boolean('groupe', false);
+        $boutiqueIds = $includeGroup ? $boutique->getGroupBoutiqueIds() : [$boutique->id];
+        $backupController = app(\App\Http\Controllers\BackupController::class);
+
+        $slug = \Illuminate\Support\Str::slug($boutique->nom ?: 'boutique-' . $boutique->id);
+        $prefix = $includeGroup ? 'dump_groupe_boutiques' : 'dump_boutique';
+        $timestamp = Carbon::now()->format('Y-m-d_H-i-s');
+        $filename = "{$prefix}_{$slug}_{$timestamp}.sql";
+
+        $scopeTitle = $includeGroup
+            ? "GROUPE BOUTIQUE : {$boutique->nom} + Filiales"
+            : "BOUTIQUE INDIVIDUELLE #{$boutique->id} : {$boutique->nom}";
+
+        return response()->stream(function () use ($backupController, $boutiqueIds, $scopeTitle, $boutique) {
+            $out = fopen('php://output', 'w');
+            $backupController->writeScopedBoutiquesSqlDump(
+                $out,
+                $boutiqueIds,
+                $scopeTitle,
+                $boutique->user_id
+            );
+            fclose($out);
+        }, 200, [
+            'Content-Type' => 'application/sql; charset=utf-8',
+            'Content-Disposition' => "attachment; filename=\"{$filename}\"",
+            'Pragma' => 'no-cache',
+        ]);
+    }
+
+    /**
+     * Télécharge un fichier d'archive SQL stocké sur le serveur.
+     */
+    public function downloadBackupFile(Request $request)
+    {
+        $rel = (string)$request->query('file', '');
+        $cleanRel = ltrim(str_replace(['..', '\\'], '', $rel), '/');
+        $fullPath = storage_path('app/backups/' . $cleanRel);
+
+        if (!$cleanRel || !\Illuminate\Support\Facades\File::exists($fullPath)) {
+            return back()->withErrors(['error' => 'Le fichier de sauvegarde demandé est introuvable.']);
+        }
+
+        return response()->download($fullPath);
+    }
+
+    /**
+     * Supprime une archive de sauvegarde stockée sur le serveur.
+     */
+    public function deleteBackupFile(Request $request)
+    {
+        $rel = (string)$request->input('file', '');
+        $cleanRel = ltrim(str_replace(['..', '\\'], '', $rel), '/');
+        $fullPath = storage_path('app/backups/' . $cleanRel);
+
+        if ($cleanRel && \Illuminate\Support\Facades\File::exists($fullPath)) {
+            \Illuminate\Support\Facades\File::delete($fullPath);
+            return back()->with('success', 'Archive de sauvegarde supprimée avec succès.');
+        }
+
+        return back()->withErrors(['error' => 'Fichier introuvable.']);
+    }
 }
 

@@ -38,7 +38,11 @@ class CategorieController extends Controller
         $categorie->description = $request->description;
         $categorie->boutique_id = $this->getBoutiqueId();
         $categorie->save();
-        return response()->json(['message' => 'Categorie creee avec succes'], 201);
+        return response()->json([
+            'message' => 'Categorie creee avec succes',
+            'id' => $categorie->id,
+            'categorie' => $categorie
+        ], 201);
     }
 
     /**

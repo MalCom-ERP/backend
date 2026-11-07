@@ -53,6 +53,20 @@
 
             <!-- Action Buttons -->
             <div class="flex flex-wrap items-center gap-3">
+                @if ($boutique->user_id)
+                    <a href="{{ route('admin.backups.dump-account', $boutique->user_id) }}"
+                        class="btn-action bg-brand-600 text-white hover:bg-brand-700 shadow-lg shadow-brand-500/20"
+                        title="Dumper l'intégralité des boutiques rattachées au Compte Principal ({{ $boutique->creator->name ?? 'Propriétaire' }})">
+                        <i class="bi bi-database-fill-down text-base"></i>
+                        <span>Dumper Compte Principal</span>
+                    </a>
+                @endif
+                <a href="{{ route('admin.backups.dump-boutique', $boutique->id) }}"
+                    class="btn-action bg-emerald-600 text-white hover:bg-emerald-700 shadow-lg shadow-emerald-500/20"
+                    title="Dumper uniquement les données SQL de cette boutique">
+                    <i class="bi bi-filetype-sql text-base"></i>
+                    <span>Dumper cette Boutique</span>
+                </a>
                 <a href="{{ route('admin.boutiques.users', $boutique->id) }}"
                     class="btn-action bg-slate-900 text-white hover:bg-black shadow-lg shadow-slate-900/20">
                     <i class="bi bi-people-fill text-base"></i>

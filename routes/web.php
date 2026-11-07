@@ -51,6 +51,15 @@ Route::middleware(['auth'])->prefix('admin')->group(function () {
     Route::post('/boutiques/{boutique}/prolonger-licence', [SuperAdminController::class, 'licenceProlongerDirect'])->name('admin.boutiques.prolonger-licence');
     Route::post('/licences/{licence}/revoquer', [SuperAdminController::class, 'licenceRevoquer'])->name('admin.licences.revoquer');
     Route::delete('/licences/{licence}', [SuperAdminController::class, 'licenceDestroy'])->name('admin.licences.destroy');
+
+    // Sauvegardes & Dumps de Base de Données par Compte Principal / Boutique
+    Route::get('/backups', [SuperAdminController::class, 'backupsIndex'])->name('admin.backups.index');
+    Route::post('/backups/run-now', [SuperAdminController::class, 'backupsRunNow'])->name('admin.backups.run-now');
+    Route::get('/backups/dump-global', [SuperAdminController::class, 'dumpGlobal'])->name('admin.backups.dump-global');
+    Route::get('/backups/dump-account/{user}', [SuperAdminController::class, 'dumpAccount'])->name('admin.backups.dump-account');
+    Route::get('/backups/dump-boutique/{boutique}', [SuperAdminController::class, 'dumpBoutique'])->name('admin.backups.dump-boutique');
+    Route::get('/backups/download', [SuperAdminController::class, 'downloadBackupFile'])->name('admin.backups.download');
+    Route::delete('/backups/delete', [SuperAdminController::class, 'deleteBackupFile'])->name('admin.backups.delete');
 });
 
 Route::get('/', function () {

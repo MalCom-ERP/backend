@@ -28,3 +28,9 @@ Artisan::command('reports:schedule-daily', function () {
     $this->info('Scheduling daily reports generation...');
     Artisan::call('reports:generate-daily');
 })->purpose('Generate and send daily reports')->dailyAt('19:00');
+
+Artisan::command('backups:schedule-daily', function () {
+    $this->info('Exécution de la sauvegarde quotidienne par Compte Principal...');
+    Artisan::call('backup:accounts', ['--retention' => 14]);
+})->purpose('Sauvegarde automatique quotidienne des bases de données par Compte Principal et Globale')->dailyAt('02:00');
+

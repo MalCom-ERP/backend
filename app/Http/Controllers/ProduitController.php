@@ -705,6 +705,10 @@ class ProduitController extends Controller
             'description' => $request->input('description')
         ]);
 
+        $produit->load(['categorie', 'stock' => function ($query) use ($boutique_id) {
+            $query->where('boutique_id', $boutique_id);
+        }]);
+
         return response()->json($produit, 201);
     }
 

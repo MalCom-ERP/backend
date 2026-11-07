@@ -390,6 +390,12 @@
                 <span>Licences & Abonnements</span>
             </a>
 
+            <a href="{{ route('admin.backups.index') }}"
+                class="nav-link {{ request()->routeIs('admin.backups.*') ? 'active' : '' }}">
+                <i class="bi bi-database-fill-down text-lg"></i>
+                <span>Sauvegardes & Dumps</span>
+            </a>
+
             <div class="pt-6 px-4 mb-2 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">
                 <span>Environnement</span>
             </div>

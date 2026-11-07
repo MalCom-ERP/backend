@@ -94,6 +94,12 @@
 
                                     <td class="px-8 py-5 text-right">
                                         <div class="flex items-center justify-end gap-2">
+                                            <a href="{{ route('admin.backups.dump-account', $admin->id) }}"
+                                                class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-brand-50 text-brand-700 hover:bg-brand-600 hover:text-white text-[11px] font-black transition-all shadow-sm border border-brand-200"
+                                                title="Dumper toutes les bases de données des boutiques associées à ce compte principal">
+                                                <i class="bi bi-database-fill-down"></i>
+                                                <span>Dumper BDD</span>
+                                            </a>
                                             @if ($admin->id !== Auth::id())
                                                 <form action="{{ route('admin.admins.destroy', $admin->id) }}" method="POST"
                                                     onsubmit="return triggerDeleteConfirm(event, 'Supprimer l\'administrateur', 'Voulez-vous vraiment supprimer définitivement le compte de {{ addslashes($admin->name) }} ? Cette action est irréversible.');">

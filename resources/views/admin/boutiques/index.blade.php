@@ -206,6 +206,19 @@
 
                                 <td class="px-8 py-5 text-right">
                                     <div class="flex items-center justify-end gap-2">
+                                        @if ($boutique->user_id)
+                                            <a href="{{ route('admin.backups.dump-account', $boutique->user_id) }}"
+                                                title="Dumper toutes les boutiques du Compte Principal ({{ $boutique->creator->name ?? 'Propriétaire' }})"
+                                                class="w-9 h-9 rounded-xl bg-brand-50 text-brand-600 hover:bg-brand-600 hover:text-white flex items-center justify-center transition-colors shadow-sm">
+                                                <i class="bi bi-database-fill-down text-xs"></i>
+                                            </a>
+                                        @else
+                                            <a href="{{ route('admin.backups.dump-boutique', $boutique->id) }}"
+                                                title="Dumper la BDD de cette boutique"
+                                                class="w-9 h-9 rounded-xl bg-brand-50 text-brand-600 hover:bg-brand-600 hover:text-white flex items-center justify-center transition-colors shadow-sm">
+                                                <i class="bi bi-database-fill-down text-xs"></i>
+                                            </a>
+                                        @endif
                                         <a href="{{ route('admin.licences.index', ['boutique_id' => $boutique->id]) }}"
                                             title="Licences & Clés"
                                             class="w-9 h-9 rounded-xl bg-amber-50 text-amber-600 hover:bg-amber-500 hover:text-white flex items-center justify-center transition-colors shadow-sm">
