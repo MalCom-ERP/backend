@@ -1,15 +1,17 @@
-name: Deploy Backend
+name: Deploy Backend (admin.malcom-lgc.com)
 
 on:
   push:
     branches: ["main"]
+  workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Backend
+        uses: actions/checkout@v4
 
       - name: Setup SSH
         run: |
@@ -20,34 +22,39 @@ jobs:
 
       - name: Deploy to VPS
         run: |
-          ssh -T ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} << EOF
+          ssh -T ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} << 'EOF'
             set -e
 
-            cd /var/www/maboutique/backend
+            echo "🚀 Démarrage du déploiement Backend sur admin.malcom-lgc.com..."
+            cd /var/www/malcom/backend
 
-            echo "Reset git state"
+            echo "🔄 Synchronisation Git avec origin/main..."
             git rebase --abort || true
             rm -rf .git/rebase-merge || true
-
-            echo "📦 Sync with origin/main"
             git fetch origin
             git reset --hard origin/main
-            echo "Code synced"
 
-            echo "Install dependencies"
+            echo "📦 Installation des dépendances Composer..."
             composer install --no-dev --optimize-autoloader --no-interaction
 
-            echo "🔐 Fix Laravel writable folders"
-            sudo chmod -R 775 storage bootstrap/cache
-
-
-            echo "Run migrations"
+            echo "🗄️ Exécution des migrations de base de données..."
             php artisan migrate --force
 
-            echo "🧹 Optimize"
+            echo "🔗 Création du lien symbolique storage..."
+            php artisan storage:link || true
+
+            echo "🧹 Optimisation et mise en cache Laravel..."
             php artisan optimize:clear
             php artisan config:cache
             php artisan route:cache
+            php artisan view:cache
 
-            echo "Deployment finished"
+            echo "🔐 Ajustement des permissions..."
+            sudo chown -R $USER:www-data storage bootstrap/cache
+            sudo chmod -R 775 storage bootstrap/cache
+
+            echo "🔄 Redémarrage de PHP-FPM..."
+            sudo systemctl reload php8.2-fpm || true
+
+            echo "✅ Déploiement Backend terminé avec succès !"
           EOF

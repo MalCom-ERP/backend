@@ -1,233 +1,316 @@
 <!DOCTYPE html>
 <html lang="fr">
-
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>@yield('title', 'Document')</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+    <title>@yield('title', 'Document Officiel')</title>
     <style>
-        * {
-            margin: 10px 5px;
-            padding: 0;
+        @page {
+            margin: @yield('page_margin', '16mm 18mm 46mm 18mm');
+            size: A4 @yield('orientation', 'portrait');
+        }
+
+        *, *::before, *::after {
             box-sizing: border-box;
         }
 
         body {
-            font-family: 'Helvetica', 'Arial', sans-serif;
-            font-size: 10pt;
+            font-family: 'DejaVu Sans', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            font-size: 8pt;
             line-height: 1.4;
             color: #1e293b;
-        }
-
-        @page {
-            size: A4 @yield('orientation', 'portrait')
-
-            ;
-            /* margin: 25mm 25mm; */
-        }
-
-        .container {
-            /* width: 100%;
-            max-width: 100%; */
-            /* margin: 25px 25px; */
-        }
-
-        /* Typography */
-        h1,
-        h2,
-        h3,
-        h4,
-        h5,
-        h6 {
-            font-weight: 700;
-            line-height: 1.2;
-        }
-
-        .text-xs {
-            font-size: 7pt;
-        }
-
-        .text-sm {
-            font-size: 8pt;
-        }
-
-        .text-base {
-            font-size: 10pt;
-        }
-
-        .text-lg {
-            font-size: 12pt;
-        }
-
-        .text-xl {
-            font-size: 14pt;
-        }
-
-        .text-2xl {
-            font-size: 18pt;
-        }
-
-        .text-3xl {
-            font-size: 24pt;
-        }
-
-        /* Colors */
-        .text-slate-900 {
-            color: #0f172a;
-        }
-
-        .text-slate-600 {
-            color: #475569;
-        }
-
-        .text-slate-400 {
-            color: #94a3b8;
-        }
-
-        .text-slate-200 {
-            color: #e2e8f0;
-        }
-
-        .text-amber-500 {
-            color: #f59e0b;
-        }
-
-        .text-emerald-500 {
-            color: #10b981;
-        }
-
-        .bg-slate-900 {
-            background-color: #0f172a;
-        }
-
-        .bg-slate-50 {
-            background-color: #f8fafc;
-        }
-
-        .bg-white {
             background-color: #ffffff;
         }
 
-        /* Borders */
-        .border-slate-900 {
-            border-color: #0f172a;
+        h1, h2, h3, h4, h5, h6, p, ul, ol, dl, dd {
+            margin: 0;
+            padding: 0;
         }
 
-        .border-slate-100 {
-            border-color: #f1f5f9;
-        }
-
-        /* Utilities */
-        .uppercase {
-            text-transform: uppercase;
-        }
-
-        .font-bold {
-            font-weight: 700;
-        }
-
-        .font-black {
-            font-weight: 900;
-        }
-
-        .italic {
-            font-style: italic;
-        }
-
-        .text-center {
-            text-align: center;
-        }
-
-        .text-right {
-            text-align: right;
-        }
-
-        .text-left {
-            text-align: left;
-        }
-
-        /* Tables */
         table {
+            border-collapse: collapse;
+            width: 100%;
+            border: none;
+        }
+
+        /* Typography */
+        h1, h2, h3, h4, h5, h6 {
+            color: #0f172a;
+            font-weight: bold;
+        }
+
+        .text-xs { font-size: 6.5pt; }
+        .text-sm { font-size: 7.5pt; }
+        .text-base { font-size: 8pt; }
+        .text-md { font-size: 9pt; }
+        .text-lg { font-size: 11pt; }
+        .text-xl { font-size: 13pt; }
+        .text-2xl { font-size: 15pt; }
+
+        .font-normal { font-weight: normal; }
+        .font-medium { font-weight: 500; }
+        .font-bold { font-weight: bold; }
+        .font-black { font-weight: 900; }
+        .italic { font-style: italic; }
+        .uppercase { text-transform: uppercase; }
+
+        .text-left { text-align: left; }
+        .text-center { text-align: center; }
+        .text-right { text-align: right; }
+
+        /* Ink-friendly colors */
+        .text-dark { color: #0f172a; }
+        .text-slate { color: #334155; }
+        .text-muted { color: #64748b; }
+        .text-light { color: #94a3b8; }
+        .text-emerald { color: #047857; }
+        .text-rose { color: #be123c; }
+        .text-amber { color: #b45309; }
+
+        .border-slate { border-color: #cbd5e1; }
+        .border-dark { border-color: #334155; }
+
+        /* Badges */
+        .badge {
+            display: inline-block;
+            padding: 2.5px 7px;
+            font-size: 6.8pt;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-radius: 3px;
+        }
+        .badge-success { background-color: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
+        .badge-warning { background-color: #fffbeb; color: #b45309; border: 1px solid #fde68a; }
+        .badge-danger { background-color: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+        .badge-info { background-color: #f0f9ff; color: #0369a1; border: 1px solid #bae6fd; }
+
+        /* Header Layout (100% full width, clean & airy) */
+        .header-table {
             width: 100%;
             border-collapse: collapse;
+            margin-bottom: 14px;
+            border-bottom: 1.5px solid #e2e8f0;
+            padding-bottom: 10px;
         }
 
-        table th {
-            background-color: #f8fafc;
-            padding: 8px 10px;
-            text-align: left;
+        .header-table td {
+            vertical-align: top;
+            border: none;
+            padding: 0;
+        }
+
+        @php
+            $brandPrimary = !empty($boutique->couleur_principale) ? $boutique->couleur_principale : '#0f172a';
+            $brandSecondary = !empty($boutique->couleur_secondaire) ? $boutique->couleur_secondaire : '#4f46e5';
+        @endphp
+
+        .doc-title-badge {
+            font-size: 14pt;
             font-weight: 900;
-            font-size: 7pt;
-            color: #94a3b8;
+            letter-spacing: 1px;
+            color: {{ $brandPrimary }};
             text-transform: uppercase;
+            text-align: right;
+            margin-bottom: 5px;
+            border: none;
+            background: transparent;
+            padding: 0;
         }
 
-        table td {
-            padding: 10px;
-            border-bottom: 1px solid #f1f5f9;
+        .brand-primary-text { color: {{ $brandPrimary }}; }
+        .brand-secondary-text { color: {{ $brandSecondary }}; }
+
+        /* Parties info (Clean 2-column layout without heavy box borders) */
+        .info-card-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 12px;
         }
 
-        /* Layout */
-        .flex {
-            display: flex;
+        .info-card-table td {
+            vertical-align: top;
+            border: none;
+            padding: 0;
         }
 
-        .justify-between {
-            justify-content: space-between;
+        .info-card {
+            background-color: transparent;
+            border: none;
+            padding: 0;
         }
 
-        .items-center {
-            align-items: center;
-        }
-
-        .mb-2 {
-            margin-bottom: 5mm;
-        }
-
-        .mb-4 {
-            margin-bottom: 10mm;
-        }
-
-        .mb-6 {
-            margin-bottom: 15mm;
-        }
-
-        .mt-4 {
-            margin-top: 10mm;
-        }
-
-        .pb-2 {
-            padding-bottom: 5mm;
-        }
-
-        .pb-4 {
-            padding-bottom: 10mm;
-        }
-
-        .border-b {
+        .info-card-title {
+            font-size: 6.5pt;
+            font-weight: bold;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+            margin-bottom: 3px;
             border-bottom: 1px solid #e2e8f0;
+            padding-bottom: 2px;
         }
 
-        .border-b-2 {
-            border-bottom: 2px solid #0f172a;
+        /* Data Table (International corporate standard - NO vertical grid lines) */
+        .table-data {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 6px;
+            margin-bottom: 14px;
         }
 
-        /* Custom */
-        .page-break {
-            page-break-after: always;
+        .table-data th {
+            background-color: #f8fafc;
+            color: #475569;
+            font-size: 7pt;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 7px 8px;
+            border-top: 1.5px solid #cbd5e1;
+            border-bottom: 1.5px solid #cbd5e1;
+            border-left: none;
+            border-right: none;
         }
 
-        .no-page-break {
+        .table-data td {
+            padding: 7px 8px;
+            font-size: 8pt;
+            border-bottom: 1px solid #f1f5f9;
+            border-left: none;
+            border-right: none;
+            vertical-align: middle;
+        }
+
+        .table-data tr:nth-child(even) td {
+            background-color: #fafbfc;
+        }
+
+        /* Totals Block (Clean right-aligned without cell boxes) */
+        .totals-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 2px;
+        }
+
+        .totals-table td {
+            padding: 4px 6px;
+            font-size: 8pt;
+            border: none;
+        }
+
+        .totals-table .total-label {
+            color: #64748b;
+            text-align: right;
+            padding-right: 10px;
+            font-size: 7.5pt;
+        }
+
+        .totals-table .total-amount {
+            color: #0f172a;
+            text-align: right;
+            font-weight: 600;
+            width: 42%;
+        }
+
+        .totals-table .highlight-row td,
+        .totals-table .grand-total td {
+            border-top: 1.5px solid #0f172a;
+            padding-top: 6px;
+            padding-bottom: 6px;
+        }
+
+        .totals-table .highlight-row .total-label,
+        .totals-table .grand-total .total-label {
+            font-size: 8.5pt;
+            font-weight: 900;
+            color: #0f172a;
+        }
+
+        .totals-table .highlight-row .total-amount,
+        .totals-table .grand-total .total-amount {
+            font-size: 10pt;
+            font-weight: 900;
+            color: #0f172a;
+        }
+
+        /* Signatures block pinned at bottom of the last page */
+        .signatures-pinned-bottom {
+            position: absolute;
+            bottom: -36mm;
+            left: 0;
+            right: 0;
+            width: 100%;
+        }
+
+        .signatures-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 0;
             page-break-inside: avoid;
         }
+
+        .signatures-table td {
+            width: 50%;
+            border: none;
+            padding: 0 15px;
+            text-align: center;
+            vertical-align: top;
+            background-color: transparent;
+        }
+
+        .signature-title {
+            font-size: 7pt;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: #475569;
+            letter-spacing: 0.5px;
+        }
+
+        .signature-line {
+            margin: 24px auto 0;
+            width: 160px;
+            border-bottom: 1px solid #cbd5e1;
+        }
+
+        /* Fixed footer on all pages */
+        .doc-footer-fixed {
+            position: fixed;
+            bottom: -44mm;
+            left: 0;
+            right: 0;
+            text-align: center;
+            font-size: 6.5pt;
+            color: #94a3b8;
+            line-height: 1.4;
+            border-top: 1px solid #e2e8f0;
+            padding-top: 4px;
+        }
+
+        /* Standard flow footer */
+        .doc-footer {
+            margin-top: 18px;
+            border-top: 1px solid #e2e8f0;
+            padding-top: 6px;
+            text-align: center;
+            font-size: 6.5pt;
+            color: #94a3b8;
+            line-height: 1.4;
+            page-break-inside: avoid;
+        }
+
+        .tabular-nums {
+            font-variant-numeric: tabular-nums;
+        }
+
+        .no-break { page-break-inside: avoid; }
     </style>
     @yield('styles')
 </head>
-
 <body>
-    <div class="container">
+    @yield('fixed_footer')
+    <div class="document-container">
         @yield('content')
     </div>
 </body>
-
 </html>

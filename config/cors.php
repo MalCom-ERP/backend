@@ -20,20 +20,32 @@ return [
     'allowed_methods' => ['*'],
 
     'allowed_origins' => [
-        '*',
+        'https://malcom-lgc.com',
+        'https://www.malcom-lgc.com',
+        'https://app.malcom-lgc.com',
+        'https://admin.malcom-lgc.com',
         'https://front.maboutique.tech',
         'https://admin.maboutique.tech',
         'http://localhost:4200',
         'http://127.0.0.1:4200',
+        'http://localhost:8000',
+        'http://127.0.0.1:8000',
+        'http://localhost:8001',
+        'http://127.0.0.1:8001',
         'tauri://localhost',
-        'https://tauri.localhost'
+        'https://tauri.localhost',
+        'http://tauri.localhost'
     ],
 
-    'allowed_origins_patterns' => [],
+    'allowed_origins_patterns' => [
+        '#^http://localhost:\d+$#',
+        '#^http://127\.0\.0\.1:\d+$#',
+        '#^https?://tauri\.localhost.*$#'
+    ],
 
     'allowed_headers' => ['*'],
 
-    'exposed_headers' => [],
+    'exposed_headers' => ['X-Shop-Nature'],
 
     'max_age' => 0,
 

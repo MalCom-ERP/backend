@@ -1,253 +1,292 @@
 @extends('pdf.layouts.base')
 
-@section('title', 'Reçu de Paiement & État de Dette')
+@section('title', 'Reçu de Crédit N° ' . str_pad($vente->id, 6, '0', STR_PAD_LEFT))
 
-@section('styles')
-    <style>
-        body {
-            font-family: 'Helvetica', Arial, sans-serif;
-            font-size: 10pt;
-            color: #000;
-        }
-
-        .excel-table {
-            width: 100%;
-            border-collapse: collapse;
-            table-layout: fixed;
-            margin-top: 15px;
-        }
-
-        .excel-table th,
-        .excel-table td {
-            border: 1px solid #000;
-            padding: 8px;
-            word-wrap: break-word;
-        }
-
-        .excel-table th {
-            background-color: #f2f2f2;
-            font-weight: bold;
-            text-transform: uppercase;
-            font-size: 8pt;
-        }
-
-        .header-box {
-            border: 2px solid #000;
-            padding: 15px;
-            margin-bottom: 20px;
-        }
-
-        .company-name {
-            font-size: 18pt;
-            font-weight: bold;
-            margin-bottom: 5px;
-        }
-
-        .doc-type {
-            background-color: #b4b4b4;
-            color: #000000;
-            padding: 10px;
-            text-align: center;
-            font-size: 16pt;
-            font-weight: bold;
-        }
-
-        .zebra tr:nth-child(even) {
-            background-color: #fafafa;
-        }
-
-        .text-right {
-            text-align: right;
-        }
-
-        .text-center {
-            text-align: center;
-        }
-
-        .font-bold {
-            font-weight: bold;
-        }
-
-        .bg-totals {
-            background-color: #f9f9f9;
-        }
-
-        .balance-label {
-            background-color: #a1a1a1ea;
-            color: #000000;
-            font-weight: bold;
-            text-align: right;
-            padding: 10px;
-        }
-
-        .balance-value {
-            border: 2px solid #000;
-            font-size: 16pt;
-            font-weight: bold;
-            text-align: right;
-            padding: 10px;
-        }
-
-        @page {
-            margin-bottom: 40mm;
-        }
-
-        .pdf-footer {
-            position: fixed;
-            bottom: 0px;
-            left: 0;
-            right: 0;
-            width: 100%;
-            margin: 0 !important;
-            padding: 0 !important;
-        }
-    </style>
+@section('fixed_footer')
+    <div class="doc-footer-fixed">
+        <div><strong>{{ $boutique->nom ?? 'MalCom' }}</strong> • Reçu officiel de suivi de compte client • Document certifié MalCom Cloud v2.0</div>
+        <div style="margin-top: 1px;">Vérifiez toujours l'authenticité de vos règlements avec votre quittance informatisée.</div>
+    </div>
 @endsection
 
 @section('content')
-    <div class="header-box">
-        <table style="width: 100%; border: none;">
-            <tr>
-                <td style="width: 60%; border: none; vertical-align: top;">
-                    <div class="company-name">{{ $boutique->nom ?? 'MA BOUTIQUE' }}</div>
-                    <div style="font-size: 9pt;">
-                        {{ $boutique->adresse ?? '---' }}<br>
-                        Tél: {{ $boutique->telephone ?? '---' }}<br>
-                        Email: {{ $boutique->email ?? '---' }}
-                    </div>
-                </td>
-                <td style="width: 40%; border: none; vertical-align: top;">
-                    <div class="doc-type">REÇU DE CRÉDIT</div>
-                    <div style="margin-top: 10px; text-align: right; font-weight: bold;">
-                        Vente N° #{{ str_pad($vente->id, 6, '0', STR_PAD_LEFT) }}<br>
-                        Date Vente: {{ \Carbon\Carbon::parse($vente->date_vente)->format('d/m/Y') }}
-                    </div>
-                </td>
-            </tr>
-        </table>
-    </div>
-
-    <table class="excel-table">
+    <!-- Official Header (Airy, Prestigious, Ink-Friendly) -->
+    <table class="header-table">
         <tr>
-            <td style="background-color: #f2f2f2; font-weight: bold; width: 20%;">CLIENT / DÉBITEUR</td>
-            <td style="font-size: 12pt; font-weight: bold;">{{ $vente->client->nom ?? 'CLIENT DE PASSAGE' }}</td>
-            <td style="background-color: #f2f2f2; font-weight: bold; width: 15%;">TÉLÉPHONE</td>
-            <td>{{ $vente->client->telephone ?? '---' }}</td>
+            <td style="width: 58%;">
+                <div style="font-size: 14pt; font-weight: 900; color: #0f172a; text-transform: uppercase; letter-spacing: 0.5px;">
+                    {{ $boutique->nom ?? 'MALCOM COMMERCE' }}
+                </div>
+                <div style="font-size: 7.5pt; color: #d97706; font-weight: bold; text-transform: uppercase; letter-spacing: 0.8px; margin-top: 2px;">
+                    {{ $boutique->description ?? 'Gestion des Ventes & Créances Clients' }}
+                </div>
+                <div style="font-size: 7.5pt; color: #64748b; margin-top: 5px; line-height: 1.4;">
+                    @if(!empty($boutique->adresse)) <div>{{ $boutique->adresse }}</div> @endif
+                    <div>Tél : {{ $boutique->telephone ?? '+223 00 00 00 00' }} @if(!empty($boutique->email)) | Email : {{ $boutique->email }} @endif</div>
+                    @if(!empty($boutique->nif) || !empty($boutique->rccm))
+                        <div style="font-size: 7pt; color: #94a3b8; margin-top: 2px;">
+                            @if(!empty($boutique->nif)) <span>NIF : <strong>{{ $boutique->nif }}</strong></span> @endif
+                            @if(!empty($boutique->rccm)) <span style="margin-left: 8px;">RCCM : <strong>{{ $boutique->rccm }}</strong></span> @endif
+                        </div>
+                    @endif
+                </div>
+            </td>
+            <td style="width: 42%; text-align: right;">
+                <div class="doc-title-badge">
+                    REÇU & ÉTAT DE CRÉDIT
+                </div>
+                <table style="width: 100%; border: none; font-size: 7.5pt; margin-top: 5px;">
+                    <tr>
+                        <td style="text-align: right; color: #64748b; padding: 1.5px 4px;">Réf. Vente :</td>
+                        <td style="text-align: right; font-weight: 800; color: #0f172a; padding: 1.5px 0;">
+                            CRD-{{ \Carbon\Carbon::parse($vente->date_vente)->format('Y') }}-{{ str_pad($vente->id, 5, '0', STR_PAD_LEFT) }}
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="text-align: right; color: #64748b; padding: 1.5px 4px;">Date d'opération :</td>
+                        <td style="text-align: right; font-weight: 600; color: #0f172a; padding: 1.5px 0;">
+                            {{ \Carbon\Carbon::parse($vente->date_vente)->format('d/m/Y') }}
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="text-align: right; color: #64748b; padding: 1.5px 4px;">Situation :</td>
+                        <td style="text-align: right; padding: 1.5px 0;">
+                            @if($vente->montant_restant <= 0)
+                                <span class="badge badge-success">INTÉGRALEMENT SOLDÉ</span>
+                            @else
+                                <span class="badge badge-danger">SOLDE EN COURS</span>
+                            @endif
+                        </td>
+                    </tr>
+                </table>
+            </td>
         </tr>
     </table>
 
+    <!-- Parties Information (Clean 2-column layout without heavy box borders) -->
+    <table class="info-card-table">
+        <tr>
+            <td style="width: 48%; padding-right: 15px;">
+                <div class="info-card">
+                    <div class="info-card-title">CLIENT / DÉBITEUR</div>
+                    <div style="font-size: 9.5pt; font-weight: 800; color: #0f172a; text-transform: uppercase; margin-top: 4px;">
+                        {{ ($vente->client && $vente->client->nom !== 'ANONYME') ? $vente->client->nom : 'CLIENT DE PASSAGE' }}
+                    </div>
+                    <div style="font-size: 7.5pt; color: #475569; margin-top: 3px; line-height: 1.35;">
+                        <div>Téléphone : <strong>{{ $vente->client->telephone ?? 'Non spécifié' }}</strong></div>
+                        @if(!empty($vente->client->adresse))
+                            <div>Adresse : {{ $vente->client->adresse }}</div>
+                        @endif
+                    </div>
+                </div>
+            </td>
+            <td style="width: 4%;"></td>
+            <td style="width: 48%; padding-left: 15px;">
+                <div class="info-card">
+                    <div class="info-card-title">DOSSIER DE CRÉANCE</div>
+                    <table style="width: 100%; border: none; font-size: 7.5pt; margin-top: 4px;">
+                        <tr>
+                            <td style="color: #64748b; padding: 1.5px 0;">Agent / Caissier :</td>
+                            <td style="text-align: right; font-weight: 600; color: #0f172a;">{{ $vente->user->name ?? 'Admin' }}</td>
+                        </tr>
+                        <tr>
+                            <td style="color: #64748b; padding: 1.5px 0;">Total Titre de Vente :</td>
+                            <td style="text-align: right; font-weight: 700; color: #0f172a;">{{ number_format($vente->montant_total, 0, ',', ' ') }} {{ $boutique->devise ?? 'FCFA' }}</td>
+                        </tr>
+                        <tr>
+                            <td style="color: #64748b; padding: 1.5px 0;">Zone Monétaire :</td>
+                            <td style="text-align: right; font-weight: 700; color: #b45309;">FCFA (UEMOA)</td>
+                        </tr>
+                    </table>
+                </div>
+            </td>
+        </tr>
+    </table>
 
-    <div
-        style="margin-top: 25px; font-weight: bold; text-decoration: underline; font-size: 9pt; text-transform: uppercase;">
-        La liste des Produits Achetés :
+    <!-- Section 1: Articles Purchased -->
+    <div style="font-size: 7.5pt; font-weight: 700; color: #0f172a; text-transform: uppercase; margin-top: 8px; margin-bottom: 2px;">
+        1. Détail des Articles Facturés
     </div>
-    <table class="excel-table zebra">
+    <table class="table-data" style="margin-top: 4px; margin-bottom: 12px;">
         <thead>
             <tr>
-                <th style="width: 10%;">REF</th>
-                <th style="width: 50%;">DÉSIGNATION ARTICLE</th>
-                <th style="width: 10%;" class="text-center">QTÉ</th>
-                <th style="width: 15%;" class="text-right">P.U.</th>
-                <th style="width: 15%;" class="text-right">TOTAL</th>
+                <th style="width: 5%; text-align: center;">N°</th>
+                <th style="width: 14%; text-align: center;">RÉFÉRENCE</th>
+                <th style="width: 45%; text-align: left;">DÉSIGNATION DE L'ARTICLE</th>
+                <th style="width: 8%; text-align: center;">QTÉ</th>
+                <th style="width: 14%; text-align: right;">PRIX UNIT.</th>
+                <th style="width: 14%; text-align: right;">TOTAL ({{ $boutique->devise ?? 'FCFA' }})</th>
             </tr>
         </thead>
         <tbody>
+            @php $itemIndex = 1; @endphp
             @foreach ($vente->detailVentes as $detail)
                 <tr>
-                    <td class="text-center">
-                        {{ str_pad($detail->produit->id, 4, '0', STR_PAD_LEFT) }}</td>
-                    <td>{{ $detail->produit->nom . ' (' . ($detail->produit->reference ?? ' ') . ') ' }}</td>
-                    <td class="text-center font-bold">{{ $detail->quantite }}</td>
-                    <td class="text-right">{{ number_format($detail->prix_unitaire, 0, ',', ' ') }}</td>
-                    <td class="text-right font-bold">{{ number_format($detail->montant_total, 0, ',', ' ') }}</td>
+                    <td style="text-align: center; color: #94a3b8; font-size: 7pt;">{{ $itemIndex++ }}</td>
+                    <td style="text-align: center; font-size: 7.5pt; color: #64748b; font-weight: 600;">
+                        #{{ str_pad($detail->produit->reference ?? $detail->produit->id, 4, '0', STR_PAD_LEFT) }}
+                    </td>
+                    <td>
+                        <div style="font-weight: 700; color: #0f172a; text-transform: uppercase;">
+                            {{ $detail->produit->nom }}
+                        </div>
+                    </td>
+                    <td style="text-align: center; font-weight: 700; color: #0f172a;">
+                        {{ $detail->quantite }}
+                    </td>
+                    <td style="text-align: right; color: #475569;">
+                        {{ number_format($detail->prix_unitaire, 0, ',', ' ') }}
+                    </td>
+                    <td style="text-align: right; font-weight: 700; color: #0f172a;">
+                        {{ number_format($detail->montant_total, 0, ',', ' ') }}
+                    </td>
                 </tr>
             @endforeach
-            @if ($vente->montant_avance > 0)
-                <tr>
-                    <td class="text-left font-bold" colspan="4">AVANCE PAYER</td>
-                    <td class="text-right font-bold">{{ number_format($vente->montant_avance, 0, ',', ' ') }}</td>
-                </tr>
-            @endif
         </tbody>
     </table>
 
-    <div
-        style="margin-top: 25px; font-weight: bold; text-decoration: underline; font-size: 9pt; text-transform: uppercase;">
-        Historique des Versements Effectués :
+    <!-- Section 2: Payments / Installments History (INCLUDING INITIAL ADVANCE) -->
+    <div style="font-size: 7.5pt; font-weight: 700; color: #0f172a; text-transform: uppercase; margin-top: 8px; margin-bottom: 2px;">
+        2. Relevé des Règlements & Versements Encaissés
     </div>
-
-    <table class="excel-table zebra">
+    <table class="table-data" style="margin-top: 4px; margin-bottom: 12px;">
         <thead>
             <tr>
-                <th style="width: 25%;">DATE DU VERSEMENT</th>
-                <th style="width: 45%;">MODE DE PAIEMENT</th>
-                <th style="width: 30%;" class="text-right">MONTANT VERSÉ</th>
+                <th style="width: 5%; text-align: center;">N°</th>
+                <th style="width: 18%; text-align: center;">DATE & HEURE</th>
+                <th style="width: 25%; text-align: left;">TYPE / MODE DE PAIEMENT</th>
+                <th style="width: 32%; text-align: left;">DÉTAILS / QUITTANCE</th>
+                <th style="width: 20%; text-align: right;">MONTANT ENCAISSÉ</th>
             </tr>
         </thead>
         <tbody>
-            @if ($paiements && count($paiements) > 0)
-                @foreach ($paiements as $paiement)
+            @php 
+                $payIndex = 1; 
+                $hasAnyPayment = false;
+            @endphp
+
+            {{-- 1. Avance initiale payée lors de la vente --}}
+            @if (($vente->montant_avance ?? 0) > 0)
+                @php $hasAnyPayment = true; @endphp
+                <tr style="background-color: #f0fdf4;">
+                    <td style="text-align: center; color: #047857; font-size: 7pt; font-weight: bold;">{{ $payIndex++ }}</td>
+                    <td style="text-align: center; font-size: 7.5pt; color: #0f172a; font-weight: bold;">
+                        {{ \Carbon\Carbon::parse($vente->date_vente)->format('d/m/Y') }}
+                    </td>
+                    <td>
+                        <strong style="text-transform: uppercase; color: #047857;">AVANCE INITIALE (À LA VENTE)</strong>
+                    </td>
+                    <td style="font-size: 7.5pt; color: #047857;">
+                        Acompte versé à la validation de la commande
+                    </td>
+                    <td style="text-align: right; font-weight: 900; color: #047857;">
+                        + {{ number_format($vente->montant_avance, 0, ',', ' ') }} {{ $boutique->devise ?? 'FCFA' }}
+                    </td>
+                </tr>
+            @endif
+
+            {{-- 2. Versements ultérieurs enregistrés --}}
+            @php $paymentsList = $paiements ?? ($vente->paiementsCredit ?? collect()); @endphp
+            @if ($paymentsList && count($paymentsList) > 0)
+                @php $hasAnyPayment = true; @endphp
+                @foreach ($paymentsList as $p)
                     <tr>
-                        <td class="text-center">
-                            {{ \Carbon\Carbon::parse($paiement->date_paiement)->format('d/m/Y H:i') }}
+                        <td style="text-align: center; color: #94a3b8; font-size: 7pt;">{{ $payIndex++ }}</td>
+                        <td style="text-align: center; font-size: 7.5pt; color: #475569;">
+                            {{ \Carbon\Carbon::parse($p->date_paiement)->format('d/m/Y H:i') }}
                         </td>
-                        <td class="text-center font-bold">{{ strtoupper($paiement->mode_paiement) }}</td>
-                        <td class="text-right font-bold">{{ number_format($paiement->montant, 0, ',', ' ') }}
-                            {{ $boutique->devise }}</td>
+                        <td>
+                            <strong style="text-transform: uppercase; color: #0f172a;">{{ $p->mode_paiement }}</strong>
+                        </td>
+                        <td style="font-size: 7.5pt; color: #64748b;">
+                            {{ $p->notes ?: 'Versement régulier' }}
+                            @if($p->user) <span style="font-size: 6.5pt; color: #94a3b8;">(Agent: {{ $p->user->name }})</span> @endif
+                        </td>
+                        <td style="text-align: right; font-weight: 700; color: #047857;">
+                            + {{ number_format($p->montant, 0, ',', ' ') }} {{ $boutique->devise ?? 'FCFA' }}
+                        </td>
                     </tr>
                 @endforeach
-            @else
+            @endif
+
+            @if (!$hasAnyPayment)
                 <tr>
-                    <td colspan="3" class="text-center italic" style="padding: 20px;">AUCUN VERSEMENT ENREGISTRÉ</td>
+                    <td colspan="5" style="text-align: center; padding: 12px; color: #94a3b8; font-style: italic;">
+                        Aucun paiement ni acompte n'a été enregistré à ce jour.
+                    </td>
                 </tr>
             @endif
         </tbody>
     </table>
 
-    <div style="margin-top: 5px; width: 360px; float: right;">
-        <table class="excel-table" style="border: 2px solid #000;">
+    <!-- Section 3: Balance & Recap -->
+    @php
+        $totalPaid = $vente->montant_total - $vente->montant_restant;
+        $versementsUlterieurs = max(0, $totalPaid - ($vente->montant_avance ?? 0));
+    @endphp
+    <table style="width: 100%; border-collapse: collapse; margin-top: 4px;">
+        <tr>
+            <td style="width: 52%; vertical-align: top; padding-right: 15px;">
+                <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 8px 10px;">
+                    <div style="font-size: 6.5pt; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 3px;">
+                        ENGAGEMENT DE PAIEMENT & MENTIONS LÉGALES
+                    </div>
+                    <div style="font-size: 6.5pt; color: #64748b; line-height: 1.35;">
+                        {{ $boutique->footer_recu ?? 'Le présent relevé certifie les sommes perçues au titre de la vente mentionnée ci-dessus. Tout solde restant est exigible selon les termes convenus.' }}
+                    </div>
+                    <div style="font-size: 6pt; color: #94a3b8; margin-top: 4px;">
+                        Règlement direct auprès de notre caisse ou via nos canaux Mobile Money certifiés.
+                    </div>
+                </div>
+            </td>
+            <td style="width: 48%; vertical-align: top;">
+                <table class="totals-table">
+                    <tr>
+                        <td class="total-label">MONTANT TOTAL DE LA FACTURE</td>
+                        <td class="total-amount">{{ number_format($vente->montant_total, 0, ',', ' ') }} {{ $boutique->devise ?? 'FCFA' }}</td>
+                    </tr>
+                    @if (($vente->montant_avance ?? 0) > 0)
+                        <tr>
+                            <td class="total-label" style="color: #047857;">AVANCE INITIALE PAYÉE</td>
+                            <td class="total-amount" style="color: #047857;">- {{ number_format($vente->montant_avance, 0, ',', ' ') }} {{ $boutique->devise ?? 'FCFA' }}</td>
+                        </tr>
+                    @endif
+                    @if ($versementsUlterieurs > 0)
+                        <tr>
+                            <td class="total-label" style="color: #047857;">VERSEMENTS ULTÉRIEURS</td>
+                            <td class="total-amount" style="color: #047857;">- {{ number_format($versementsUlterieurs, 0, ',', ' ') }} {{ $boutique->devise ?? 'FCFA' }}</td>
+                        </tr>
+                    @endif
+                    <tr>
+                        <td class="total-label" style="font-weight: 700; color: #047857;">TOTAL DÉJÀ RÉGLÉ / ENCAISSÉ</td>
+                        <td class="total-amount" style="color: #047857; font-weight: 700;">{{ number_format($totalPaid, 0, ',', ' ') }} {{ $boutique->devise ?? 'FCFA' }}</td>
+                    </tr>
+                    <tr class="highlight-row">
+                        <td class="total-label" style="color: {{ $vente->montant_restant <= 0 ? '#047857' : '#dc2626' }};">
+                            {{ $vente->montant_restant <= 0 ? 'SOLDE (INTÉGRALEMENT RÉGLÉ)' : 'RESTE À PAYER (SOLDE DÛ)' }}
+                        </td>
+                        <td class="total-amount" style="color: {{ $vente->montant_restant <= 0 ? '#047857' : '#dc2626' }};">
+                            {{ number_format($vente->montant_restant, 0, ',', ' ') }} {{ $boutique->devise ?? 'FCFA' }}
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+
+    <!-- Dual Signatures Block (Pinned to bottom of the last page) -->
+    <div class="signatures-pinned-bottom">
+        <table class="signatures-table">
             <tr>
-                <td style="background-color: #eee; font-weight: bold;">MONTANT TOTAL DE L'ACHAT</td>
-                <td class="text-right font-bold">{{ number_format($vente->montant_total, 0, ',', ' ') }}</td>
-            </tr>
-            <tr>
-                <td style="background-color: #eee; font-weight: bold;">TOTAL DÉJÀ RÉGLÉ</td>
-                <td class="text-right font-bold" style="color: green;">
-                    {{ number_format($vente->montant_total - $vente->montant_restant, 0, ',', ' ') }}</td>
-            </tr>
-            <tr>
-                <td class="balance-label">RESTE À PAYER (SOLDE)</td>
-                <td class="balance-value" style="color: red;">
-                    {{ number_format($vente->montant_restant, 0, ',', ' ') }}
-                    <small style="font-size: 8pt;">{{ $boutique->devise }}</small>
+                <td>
+                    <div class="signature-title">Pour la Caisse / Établissement (Cachet)</div>
+                    <div class="signature-line"></div>
+                </td>
+                <td>
+                    <div class="signature-title">Pour le Client (Reconnaissance de dette / Reçu)</div>
+                    <div class="signature-line"></div>
                 </td>
             </tr>
         </table>
-    </div>
-
-    <div class="pdf-footer">
-        <div style="clear: both; margin-bottom: 0px;">
-            <table style="width: 100%; border: none;">
-                <tr>
-                    <td style="width: 45%; text-align: center; vertical-align: top; height: 20px;">
-                        <div style="font-size: 8pt; font-weight: bold; text-transform: uppercase; padding-bottom: 20px;">
-                            Cachet Boutique &
-                            Date
-                        </div>
-                    </td>
-                    <td style="width: 10%; border: none;"></td>
-                    <td style="width: 45%; text-align: center; vertical-align: top;">
-                        <div style="font-size: 8pt; font-weight: bold; text-transform: uppercase;">
-                            Signature Client
-                        </div>
-                    </td>
-                </tr>
-            </table>
-        </div>
-
-        <div
-            style="margin-top: 0px; text-align: center; font-size: 8pt; color: #666; font-style: italic; border-top: 1px solid #ccc; padding-top: 10px;">
-            {{ $boutique->footer_recu ?? 'Conservez ce reçu comme preuve de paiement de votre créance.' }}
-        </div>
     </div>
 @endsection

@@ -1,201 +1,194 @@
 @extends('pdf.layouts.base')
 
-@section('title', 'Bordereau De Livraison')
+@section('title', 'Bordereau N° ' . str_pad($vente->id, 6, '0', STR_PAD_LEFT))
 
-@section('styles')
-    <style>
-        body {
-            font-family: 'Helvetica', Arial, sans-serif;
-            font-size: 10pt;
-            color: #000;
-        }
-
-        .excel-table {
-            width: 100%;
-            border-collapse: collapse;
-            table-layout: fixed;
-            margin-top: 20px;
-        }
-
-        .excel-table th,
-        .excel-table td {
-            border: 1px solid #666;
-            padding: 8px;
-            word-wrap: break-word;
-        }
-
-        .excel-table th {
-            background-color: #f2f2f2;
-            font-weight: bold;
-            text-transform: uppercase;
-            font-size: 8pt;
-        }
-
-        .header-box {
-            border: 2px solid #000;
-            padding: 15px;
-            margin-bottom: 20px;
-        }
-
-        .company-name {
-            font-size: 20pt;
-            font-weight: bold;
-            margin-bottom: 5px;
-        }
-
-        .doc-type {
-            background-color: #757575;
-            color: #0c0c0c;
-            padding: 10px;
-            text-align: center;
-            font-size: 18pt;
-            font-weight: bold;
-        }
-
-        .zebra tr:nth-child(even) {
-            background-color: #fafafa;
-        }
-
-        .text-right {
-            text-align: right;
-        }
-
-        .text-center {
-            text-align: center;
-        }
-
-        .bg-grey {
-            background-color: #f9f9f9;
-        }
-
-        .font-bold {
-            font-weight: bold;
-        }
-
-        .totals-table {
-            width: 250px;
-            float: right;
-            margin-top: 10px;
-            border-collapse: collapse;
-        }
-
-        .totals-table td {
-            border: 1px solid #666;
-            padding: 8px;
-        }
-
-        @page {
-            margin-bottom: 50mm;
-        }
-
-        .pdf-footer {
-            position: fixed;
-            bottom: 0px;
-            left: 0;
-            right: 0;
-            width: 100%;
-            margin: 0 !important;
-            padding: 0 !important;
-        }
-    </style>
+@section('fixed_footer')
+    <div class="doc-footer-fixed">
+        <div><strong>{{ $boutique->nom ?? 'MalCom' }}</strong> • {{ $boutique->footer_bordereau ?? 'Bordereau officiel de livraison de marchandises • Conforme MalCom Cloud v2.0' }}</div>
+    </div>
 @endsection
 
 @section('content')
-    <div class="header-box">
-        <table style="width: 100%; border: none;">
-            <tr>
-                <td style="width: 60%; border: none; vertical-align: top;">
-                    <div class="company-name">{{ $boutique->nom ?? 'MA BOUTIQUE' }}</div>
-                    <div style="font-size: 9pt;">
-                        {{ $boutique->adresse ?? 'Adresse non spécifiée' }}<br>
-                        Tél: {{ $boutique->telephone ?? '---' }}<br>
-                        Email: {{ $boutique->email ?? '---' }}
-                    </div>
-                </td>
-                <td style="width: 40%; border: none; vertical-align: top;">
-                    <div class="doc-type">BORDEREAU</div>
-                    <div style="margin-top: 10px; text-align: right; font-weight: bold;">
-                        N° #{{ str_pad($vente->id, 6, '0', STR_PAD_LEFT) }}<br>
-                        Date: {{ \Carbon\Carbon::parse($vente->date_vente)->format('d/m/Y HH:mm') }}
-                    </div>
-                </td>
-            </tr>
-        </table>
-    </div>
-
-    <table class="excel-table">
+    <!-- Official Header (Airy, Prestigious, Ink-Friendly) -->
+    <table class="header-table">
         <tr>
-            <td style="background-color: #f2f2f2; font-weight: bold; width: 15%;">CLIENT</td>
-            <td>{{ $vente->client->nom != 'ANONYME' ? $vente->client->nom : 'CLIENT DE PASSAGE' }}</td>
-            <td style="background-color: #f2f2f2; font-weight: bold; width: 15%;">CONTACT</td>
-            <td class="text-center font-bold">
-                {{ $vente->client->telephone ?? 'N/A' }}
+            <td style="width: 58%;">
+                @if(!empty($boutique->logo))
+                    <div style="margin-bottom: 6px;">
+                        <img src="{{ $boutique->logo }}" style="max-height: 44px; max-width: 150px; object-fit: contain;">
+                    </div>
+                @endif
+                <div style="font-size: 14pt; font-weight: 900; color: {{ !empty($boutique->couleur_principale) ? $boutique->couleur_principale : '#0f172a' }}; text-transform: uppercase; letter-spacing: 0.5px;">
+                    {{ $boutique->nom ?? 'MALCOM COMMERCE' }}
+                </div>
+                <div style="font-size: 7.5pt; color: {{ !empty($boutique->couleur_secondaire) ? $boutique->couleur_secondaire : '#d97706' }}; font-weight: bold; text-transform: uppercase; letter-spacing: 0.8px; margin-top: 2px;">
+                    {{ $boutique->description_bordereau ?? $boutique->description ?? 'Bordereau de Livraison & Décharge Commerciale' }}
+                </div>
+                <div style="font-size: 7.5pt; color: #64748b; margin-top: 5px; line-height: 1.4;">
+                    @if(!empty($boutique->adresse)) <div>{{ $boutique->adresse }}</div> @endif
+                    <div>Tél : {{ $boutique->telephone ?? '+223 00 00 00 00' }} @if(!empty($boutique->email)) | Email : {{ $boutique->email }} @endif</div>
+                    @if(!empty($boutique->nif) || !empty($boutique->rccm))
+                        <div style="font-size: 7pt; color: #94a3b8; margin-top: 2px;">
+                            @if(!empty($boutique->nif)) <span>NIF : <strong>{{ $boutique->nif }}</strong></span> @endif
+                            @if(!empty($boutique->rccm)) <span style="margin-left: 8px;">RCCM : <strong>{{ $boutique->rccm }}</strong></span> @endif
+                        </div>
+                    @endif
+                </div>
+            </td>
+            <td style="width: 42%; text-align: right;">
+                <div class="doc-title-badge">
+                    BORDEREAU DE LIVRAISON
+                </div>
+                <table style="width: 100%; border: none; font-size: 7.5pt; margin-top: 5px;">
+                    <tr>
+                        <td style="text-align: right; color: #64748b; padding: 1.5px 4px;">Numéro BL :</td>
+                        <td style="text-align: right; font-weight: 800; color: #0f172a; padding: 1.5px 0;">
+                            BL-{{ \Carbon\Carbon::parse($vente->date_vente)->format('Y') }}-{{ str_pad($vente->id, 5, '0', STR_PAD_LEFT) }}
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="text-align: right; color: #64748b; padding: 1.5px 4px;">Date de livraison :</td>
+                        <td style="text-align: right; font-weight: 600; color: #0f172a; padding: 1.5px 0;">
+                            {{ \Carbon\Carbon::parse($vente->date_vente)->format('d/m/Y H:i') }}
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="text-align: right; color: #64748b; padding: 1.5px 4px;">Type :</td>
+                        <td style="text-align: right; padding: 1.5px 0;">
+                            <span class="badge badge-info">LIVRAISON CLIENT</span>
+                        </td>
+                    </tr>
+                </table>
             </td>
         </tr>
     </table>
 
-    <table class="excel-table zebra">
+    <!-- Parties Information (Clean 2-column layout without heavy box borders) -->
+    <table class="info-card-table">
+        <tr>
+            <td style="width: 48%; padding-right: 15px;">
+                <div class="info-card">
+                    <div class="info-card-title">DESTINATAIRE / RÉCEPTIONNAIRE</div>
+                    <div style="font-size: 9.5pt; font-weight: 800; color: #0f172a; text-transform: uppercase; margin-top: 4px;">
+                        {{ ($vente->client && $vente->client->nom !== 'ANONYME') ? $vente->client->nom : 'CLIENT DE PASSAGE' }}
+                    </div>
+                    <div style="font-size: 7.5pt; color: #475569; margin-top: 3px; line-height: 1.35;">
+                        <div>Contact : {{ $vente->client->telephone ?? 'Non spécifié' }}</div>
+                        @if(!empty($vente->client->adresse))
+                            <div>Lieu de livraison : {{ $vente->client->adresse }}</div>
+                        @endif
+                    </div>
+                </div>
+            </td>
+            <td style="width: 4%;"></td>
+            <td style="width: 48%; padding-left: 15px;">
+                <div class="info-card">
+                    <div class="info-card-title">EXPÉDITION & CONTRÔLE</div>
+                    <table style="width: 100%; border: none; font-size: 7.5pt; margin-top: 4px;">
+                        <tr>
+                            <td style="color: #64748b; padding: 1.5px 0;">Agent préparateur :</td>
+                            <td style="text-align: right; font-weight: 600; color: #0f172a;">{{ $vente->user->name ?? 'Admin' }}</td>
+                        </tr>
+                        <tr>
+                            <td style="color: #64748b; padding: 1.5px 0;">Mode d'expédition :</td>
+                            <td style="text-align: right; font-weight: 600; color: #0f172a;">Retrait magasin / Livraison</td>
+                        </tr>
+                        <tr>
+                            <td style="color: #64748b; padding: 1.5px 0;">Total Articles :</td>
+                            <td style="text-align: right; font-weight: 700; color: #0f172a;">{{ count($vente->detailVentes) }} référence(s)</td>
+                        </tr>
+                    </table>
+                </div>
+            </td>
+        </tr>
+    </table>
+
+    <!-- Items Table (NO vertical grid borders) -->
+    <table class="table-data">
         <thead>
             <tr>
-                <th style="width: 10%;">REF</th>
-                <th style="width: 50%;">DÉSIGNATION ARTICLE</th>
-                <th style="width: 10%;" class="text-center">QTÉ</th>
-                <th style="width: 15%;" class="text-right">P.U.</th>
-                <th style="width: 15%;" class="text-right">TOTAL</th>
+                <th style="width: 5%; text-align: center;">N°</th>
+                <th style="width: 14%; text-align: center;">RÉFÉRENCE</th>
+                <th style="width: 45%; text-align: left;">DÉSIGNATION DU COLIS / ARTICLE</th>
+                <th style="width: 10%; text-align: center;">QTÉ EXP.</th>
+                <th style="width: 13%; text-align: right;">VALEUR UNIT.</th>
+                <th style="width: 13%; text-align: right;">TOTAL VALEUR</th>
             </tr>
         </thead>
         <tbody>
+            @php 
+                $bIndex = 1; 
+                $totalQty = 0;
+            @endphp
             @foreach ($vente->detailVentes as $detail)
+                @php $totalQty += $detail->quantite; @endphp
                 <tr>
-                    <td class="text-center">
-                        {{ str_pad($detail->produit->reference ?? $detail->produit->id, 4, '0', STR_PAD_LEFT) }}</td>
-                    <td>{{ $detail->produit->nom }}</td>
-                    <td class="text-center font-bold">{{ $detail->quantite }}</td>
-                    <td class="text-right">{{ number_format($detail->prix_unitaire, 0, ',', ' ') }}</td>
-                    <td class="text-right font-bold">{{ number_format($detail->montant_total, 0, ',', ' ') }}</td>
+                    <td style="text-align: center; color: #94a3b8; font-size: 7pt;">{{ $bIndex++ }}</td>
+                    <td style="text-align: center; font-size: 7.5pt; color: #64748b; font-weight: 600;">
+                        #{{ str_pad($detail->produit->reference ?? $detail->produit->id, 4, '0', STR_PAD_LEFT) }}
+                    </td>
+                    <td>
+                        <div style="font-weight: 700; color: #0f172a; text-transform: uppercase;">
+                            {{ $detail->produit->nom }}
+                        </div>
+                    </td>
+                    <td style="text-align: center; font-weight: 700; color: #0f172a;">
+                        {{ $detail->quantite }}
+                    </td>
+                    <td style="text-align: right; color: #475569;">
+                        {{ number_format($detail->prix_unitaire, 0, ',', ' ') }}
+                    </td>
+                    <td style="text-align: right; font-weight: 700; color: #0f172a;">
+                        {{ number_format($detail->montant_total, 0, ',', ' ') }}
+                    </td>
                 </tr>
             @endforeach
         </tbody>
     </table>
 
-    <div style="clear: both;">
-        <table class="totals-table">
+    <!-- Summary & Notes -->
+    <table style="width: 100%; border-collapse: collapse; margin-top: 4px;">
+        <tr>
+            <td style="width: 52%; vertical-align: top; padding-right: 15px;">
+                <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 8px 10px;">
+                    <div style="font-size: 6.5pt; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 3px;">
+                        RÉSERVE & DÉCHARGE DE RÉCEPTION
+                    </div>
+                    <div style="font-size: 6.5pt; color: #64748b; line-height: 1.35;">
+                        {{ $boutique->footer_bordereau ?? 'Le client atteste avoir reçu en bon état et conforme la totalité des marchandises décrites sur ce bordereau. Toute anomalie ou avarie doit être signalée sous 24h.' }}
+                    </div>
+                </div>
+            </td>
+            <td style="width: 48%; vertical-align: top;">
+                <table class="totals-table">
+                    <tr>
+                        <td class="total-label">QUANTITÉ TOTALE COLIS</td>
+                        <td class="total-amount">{{ $totalQty }} unité(s)</td>
+                    </tr>
+                    <tr class="highlight-row">
+                        <td class="total-label" style="font-weight: 900;">VALEUR TOTALE DÉCLARÉE</td>
+                        <td class="total-amount" style="font-size: 10pt;">
+                            {{ number_format($vente->montant_total, 0, ',', ' ') }} {{ $boutique->devise ?? 'FCFA' }}
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+
+    <!-- Dual Signatures Block (Pinned to bottom of the last page) -->
+    <div class="signatures-pinned-bottom">
+        <table class="signatures-table">
             <tr>
-                <td class="font-bold">MONTANT TOTAL</td>
-                <td class="text-right font-bold" style="font-size: 12pt;">
-                    {{ number_format($vente->montant_total ?? 0, 0, ',', ' ') }}
-                    <small style="font-size: 8pt;">{{ $boutique->devise ?? 'CFA' }}</small>
+                <td>
+                    <div class="signature-title">Expéditeur / Transporteur (Signature & Date)</div>
+                    <div class="signature-line"></div>
+                </td>
+                <td>
+                    <div class="signature-title">Destinataire (Date, Cachet & Signature)</div>
+                    <div class="signature-line"></div>
                 </td>
             </tr>
         </table>
-
-        <div style="width: 400px; margin-top: 10px; font-size: 8pt; color: #555;">
-            <strong style="color: #000;">Note Importante:</strong><br>
-            {{ $boutique->footer_bordereau ?? 'Ce document reste la propriété de la boutique jusqu\'au règlement intégral.' }}
-        </div>
-    </div>
-
-    <div class="pdf-footer">
-        <div>
-            <table style="width: 100%; border: none;">
-                <tr>
-                    <td
-                        style="width: 50%; border: 1px dashed #ccc; padding: 20px; text-align: center; vertical-align: top;">
-                        <div style="font-size: 8pt; font-weight: bold; text-transform: uppercase; margin-bottom: 50px;">
-                            Signature Autorisée</div>
-                    </td>
-                    <td
-                        style="width: 50%; border: 1px dashed #ccc; padding: 20px; text-align: center; vertical-align: top;">
-                        <div style="font-size: 8pt; font-weight: bold; text-transform: uppercase; margin-bottom: 50px;">
-                            Signature du Client (Accusé)</div>
-                    </td>
-                </tr>
-            </table>
-        </div>
-
-        <div
-            style="margin-top: 30px; text-align: center; font-size: 8pt; color: #666; border-top: 1px solid #ccc; padding-top: 10px;">
-            Document Commercial Officiel • {{ strtoupper($boutique->nom ?? 'Ma Boutique') }}
-        </div>
     </div>
 @endsection

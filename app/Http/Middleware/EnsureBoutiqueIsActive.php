@@ -28,13 +28,29 @@ class EnsureBoutiqueIsActive
 
         if ($boutiqueId && $boutiqueId !== 'null' && $boutiqueId !== '') {
             $boutique = \App\Models\Boutique::find($boutiqueId);
-            if ($boutique && !$boutique->is_active) {
-                \Log::warning("Access denied to inactive boutique {$boutiqueId} by user " . Auth::id());
-                return response()->json([
-                    'error' => 'Cette boutique est désactivée. Accès refusé.'
-                ], 403);
-            }
-            if (!$boutique) {
+            if ($boutique) {
+                $root = $boutique->getRootBoutique();
+
+                if (!$root->is_active) {
+                    \Log::warning("Access denied to inactive boutique/group {$root->id} by user " . Auth::id());
+                    $nom = $boutique->isFiliale() ? "{$boutique->nom} (rattachée à {$root->nom})" : $boutique->nom;
+                    return response()->json([
+                        'error' => "Cette boutique ({$nom}) est désactivée. Accès refusé."
+                    ], 403);
+                }
+
+                if ($root->isLicenceExpired()) {
+                    \Log::warning("Access denied: expired licence for boutique/group {$root->id}");
+                    $nom = $boutique->isFiliale() ? "« {$boutique->nom} » (Filiale de « {$root->nom} »)" : "« {$boutique->nom} »";
+                    return response()->json([
+                        'error' => 'licence_expired',
+                        'message' => "La licence de votre groupe d'établissements {$nom} a expiré. Veuillez saisir votre clé d'activation.",
+                        'boutique_id' => $root->id,
+                        'boutique_nom' => $root->nom,
+                        'date_expiration' => $root->date_expiration_licence
+                    ], 403);
+                }
+            } else {
                 \Log::error("Boutique {$boutiqueId} not found in middleware");
             }
         }
