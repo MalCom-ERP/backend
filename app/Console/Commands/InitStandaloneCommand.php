@@ -58,18 +58,18 @@ class InitStandaloneCommand extends Command
             }
         }
 
-        // 5. Boutique autonome par défaut
+        // 5. Boutique autonome par défaut (Essai Démo 30 jours)
         $defaultNature = Nature::first();
         $boutique = Boutique::first();
         if (!$boutique) {
-            $this->info('🏪 Création de la boutique locale...');
+            $this->info('🏪 Création de la boutique locale (Essai 30 jours)...');
             $boutique = Boutique::create([
                 'nom' => 'Ma Boutique',
                 'adresse' => 'Point de vente local',
                 'telephone' => '000000000',
                 'email' => 'contact@malcom.local',
                 'is_active' => true,
-                'date_expiration_licence' => now()->addDays(60),
+                'date_expiration_licence' => now()->addDays(30),
                 'nature_id' => $defaultNature ? $defaultNature->id : 1,
                 'couleur_principale' => '#4f46e5',
                 'couleur_secondaire' => '#818cf8',
@@ -79,13 +79,11 @@ class InitStandaloneCommand extends Command
                 'footer_facture' => 'Merci pour votre confiance !',
             ]);
         } else {
-            // S'assurer que la licence locale a une validité initiale de 2 mois si non définie
-            if (!$boutique->date_expiration_licence) {
-                $boutique->update([
-                    'date_expiration_licence' => now()->addDays(60),
-                    'is_active' => true
-                ]);
-            }
+            // S'assurer que la licence locale a une validité initiale de 30 jours
+            $boutique->update([
+                'date_expiration_licence' => now()->addDays(30),
+                'is_active' => true
+            ]);
         }
 
         // 4b. Super Admin standard activé et rattaché
@@ -102,18 +100,28 @@ class InitStandaloneCommand extends Command
             $super->save();
         }
 
-        // 6. Licence active pour la boutique (validité initiale 2 mois / 60 jours)
+        // 6. Licence Démo prédéfinie sur 30 jours (MC-DEMO-30JOURS-2026)
+        $demoKey = 'MC-DEMO-30JOURS-2026';
         $licence = Licence::where('boutique_id', $boutique->id)->first();
         if (!$licence) {
-            $this->info('🔑 Création de la licence autonome (2 mois)...');
+            $this->info("🔑 Création de la licence Démo 30 jours ({$demoKey})...");
             Licence::create([
                 'boutique_id' => $boutique->id,
-                'cle_licence' => 'MC-STANDALONE-' . strtoupper(\Illuminate\Support\Str::random(8)),
-                'duree_jours' => 60, // 2 mois (60 jours)
+                'cle_licence' => $demoKey,
+                'duree_jours' => 30, // 30 jours d'essai gratuit
                 'statut' => 'active',
                 'date_activation' => now(),
-                'date_expiration' => now()->addDays(60),
-                'note' => 'Licence autonome locale (validité 2 mois)'
+                'date_expiration' => now()->addDays(30),
+                'note' => 'Licence Démo Gratuite (validité 30 jours)'
+            ]);
+        } else {
+            $licence->update([
+                'cle_licence' => $demoKey,
+                'duree_jours' => 30,
+                'statut' => 'active',
+                'date_activation' => now(),
+                'date_expiration' => now()->addDays(30),
+                'note' => 'Licence Démo Gratuite (validité 30 jours)'
             ]);
         }
 
@@ -157,7 +165,7 @@ class InitStandaloneCommand extends Command
                 ['Boutique par défaut', $boutique->nom . " (ID: {$boutique->id})"],
                 ['Identifiant Admin', 'admin@malcom.local (mdp: admin1234)'],
                 ['Identifiant SuperAdmin', 'super@maboutique.com (mdp: Skypper19@)'],
-                ['Licence', 'Autonome (2 mois)'],
+                ['Clé Licence Démo (30j)', 'MC-DEMO-30JOURS-2026'],
                 ['Exercice Actif', $currentYear]
             ]
         );

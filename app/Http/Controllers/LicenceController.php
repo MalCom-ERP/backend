@@ -50,33 +50,54 @@ class LicenceController extends Controller
         // Toujours opérer sur la boutique principale (racine du groupe d'établissements)
         $rootBoutique = $boutique->getRootBoutique();
 
-        // Si la clé est déjà active et toujours valide pour ce groupe de boutiques
-        if ($licence->statut === 'active' && !$rootBoutique->isLicenceExpired()) {
-            $formattedExp = $rootBoutique->date_expiration_licence
-                ? Carbon::parse($rootBoutique->date_expiration_licence)->format('d/m/Y à H:i')
-                : 'Accès permanent (À vie)';
+        // 1. Si la clé a déjà été activée au moins une fois, elle reste RÉUTILISABLE sur tous les
+        //    navigateurs / postes (Admin, Gestionnaires, Vendeurs, Comptables, Filiales) tant qu'elle n'est pas expirée !
+        if ($licence->statut === 'active') {
+            $isUnlimited = $licence->duree_jours >= 90000 || $rootBoutique->hasUnlimitedLicence();
+            $licenceExpired = !$isUnlimited && $licence->date_expiration && now()->greaterThan($licence->date_expiration);
+            $boutiqueExpired = $rootBoutique->isLicenceExpired();
 
-            $filialesCount = $rootBoutique->filiales()->count();
+            if (!$licenceExpired || !$boutiqueExpired) {
+                // S'assurer que la boutique racine et ses filiales sont bien synchronisées avec cette licence valide
+                if ($boutiqueExpired && !$licenceExpired) {
+                    $rootBoutique->date_expiration_licence = $isUnlimited ? null : $licence->date_expiration;
+                    $rootBoutique->is_active = true;
+                    $rootBoutique->save();
+                    $rootBoutique->syncLicenceToFiliales();
+                }
 
-            return response()->json([
-                'success' => true,
-                'already_active' => true,
-                'message' => "Licence active confirmée pour le groupe « {$rootBoutique->nom} »" . ($filialesCount > 0 ? " et ses {$filialesCount} filiale(s) !" : " !"),
-                'boutique_id' => $rootBoutique->id,
-                'boutique_nom' => $rootBoutique->nom,
-                'date_expiration' => $rootBoutique->date_expiration_licence,
-                'date_expiration_formatee' => $formattedExp,
-                'is_unlimited' => $rootBoutique->hasUnlimitedLicence(),
-                'jours_restants' => $rootBoutique->joursRestants(),
-                'filiales_count' => $filialesCount,
-                'jours_ajoutes' => 0,
-            ], 200);
+                $effectiveExp = $rootBoutique->date_expiration_licence ?: $licence->date_expiration;
+                $formattedExp = ($isUnlimited || !$effectiveExp)
+                    ? 'Accès permanent (À vie)'
+                    : Carbon::parse($effectiveExp)->format('d/m/Y à H:i');
+
+                $filialesCount = $rootBoutique->filiales()->count();
+
+                return response()->json([
+                    'success' => true,
+                    'already_active' => true,
+                    'message' => "Clé valide reconnue ! Accès déverrouillé sur cet appareil pour « {$rootBoutique->nom} »" . ($filialesCount > 0 ? " et ses {$filialesCount} filiale(s)." : "."),
+                    'boutique_id' => $rootBoutique->id,
+                    'boutique_nom' => $rootBoutique->nom,
+                    'date_expiration' => $effectiveExp,
+                    'date_expiration_formatee' => $formattedExp,
+                    'is_unlimited' => $isUnlimited,
+                    'jours_restants' => $rootBoutique->joursRestants(),
+                    'filiales_count' => $filialesCount,
+                    'jours_ajoutes' => 0,
+                ], 200);
+            }
+
+            // Si la date d'expiration est dépassée, marquer la clé comme expirée
+            $licence->statut = 'expiree';
+            $licence->save();
         }
 
-        if ($licence->statut === 'active' || $licence->statut === 'expiree') {
+        if ($licence->statut === 'expiree' || $licence->isExpired()) {
+            $expDateStr = $licence->date_expiration ? $licence->date_expiration->format('d/m/Y') : '';
             return response()->json([
-                'error' => 'already_used',
-                'message' => 'Cette clé d\'activation a déjà été utilisée le ' . ($licence->date_activation ? $licence->date_activation->format('d/m/Y') : '') . '.'
+                'error' => 'expired_key',
+                'message' => 'Cette clé d\'activation a expiré' . ($expDateStr ? " le {$expDateStr}" : '') . '. Veuillez demander une nouvelle clé de renouvellement.'
             ], 400);
         }
 
@@ -133,11 +154,21 @@ class LicenceController extends Controller
     }
 
     /**
-     * Récupère l'état de la licence d'une boutique (ou boutique courante/première si non spécifiée)
+     * Récupère l'état de la licence d'une boutique (ou boutique courante/première active si non spécifiée)
      */
     public function statut(Request $request, $boutique_id = null)
     {
-        $boutique = $boutique_id ? Boutique::find($boutique_id) : Boutique::first();
+        if ($boutique_id) {
+            $boutique = Boutique::find($boutique_id);
+        } else {
+            // Si aucun boutique_id n'est fourni (ex: nouveau navigateur), privilégier une boutique ayant une licence active non expirée
+            $boutique = Boutique::where('is_active', true)
+                ->where(function ($q) {
+                    $q->whereNull('date_expiration_licence')
+                      ->orWhere('date_expiration_licence', '>', now());
+                })
+                ->first() ?: Boutique::first();
+        }
 
         if (!$boutique) {
             return response()->json(['error' => 'Boutique introuvable.'], 404);

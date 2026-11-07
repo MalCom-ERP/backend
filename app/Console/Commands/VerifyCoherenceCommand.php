@@ -206,6 +206,12 @@ class VerifyCoherenceCommand extends Command
         $this->assertCheck(CompteComptable::count() >= 50, "Plan Comptable SYSCOHADA initialisé (>= 50 comptes)", CompteComptable::count(), ">=50");
         $this->assertCheck(JournalComptable::count() === 5, "5 Journaux SYSCOHADA (VT, AC, CA, BQ, OD) initialisés", JournalComptable::count(), 5);
 
+        // Vérifier que la clé de licence est réutilisable à tout moment sur plusieurs navigateurs / appareils tant qu'elle n'est pas expirée
+        $resActiver1 = $this->dispatchApi('POST', '/api/licences/activer', ['cle_licence' => 'MC-TEST-2026-COHERENCE']);
+        $resActiver2 = $this->dispatchApi('POST', '/api/licences/activer', ['cle_licence' => 'MC-TEST-2026-COHERENCE']);
+        $resActiver3 = $this->dispatchApi('POST', '/api/licences/activer', ['cle_licence' => 'MC-TEST-2026-COHERENCE']);
+        $this->assertCheck($resActiver1['status'] === 200 && $resActiver2['status'] === 200 && $resActiver3['status'] === 200, "Clé d'activation réutilisable sur plusieurs navigateurs/postes (Admin, Gestionnaire, Vendeur) tant qu'elle est valide", $resActiver3['status'], 200);
+
         $resUsers = $this->dispatchApi('GET', '/api/user', [], $admin, $boutique->id);
         $userIds = collect($resUsers['json'])->pluck('id')->toArray();
         $this->assertCheck(!in_array($admin->id, $userIds), "L'utilisateur connecté (Admin) ne se voit pas lui-même dans la liste des utilisateurs");
