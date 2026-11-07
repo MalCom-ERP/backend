@@ -20,22 +20,41 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Deploy to VPS
+      - name: Sync Code to VPS via Rsync
+        run: |
+          ssh -T ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "mkdir -p /var/www/malcom/backend"
+          rsync -avz --delete \
+            --no-owner --no-group \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='vendor' \
+            --exclude='node_modules' \
+            --exclude='.env' \
+            --exclude='storage' \
+            --exclude='public/storage' \
+            --exclude='database/*.sqlite' \
+            ./ ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/var/www/malcom/backend/
+
+      - name: Finalize Backend Deployment on VPS
         run: |
           ssh -T ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} << 'EOF'
             set -e
 
-            echo "🚀 Démarrage du déploiement Backend sur admin.malcom-lgc.com..."
+            echo "🚀 Démarrage de la configuration Backend sur admin.malcom-lgc.com..."
             cd /var/www/malcom/backend
 
-            echo "🔄 Synchronisation Git avec origin/main..."
-            git rebase --abort || true
-            rm -rf .git/rebase-merge || true
-            git fetch origin
-            git reset --hard origin/main
+            mkdir -p storage/app/public storage/framework/cache/data storage/framework/sessions storage/framework/views storage/logs bootstrap/cache
+
+            if [ ! -f .env ] && [ -f /var/www/malcom/.env.production.template ]; then
+              cp /var/www/malcom/.env.production.template .env
+            fi
 
             echo "📦 Installation des dépendances Composer..."
             composer install --no-dev --optimize-autoloader --no-interaction
+
+            if ! grep -q "^APP_KEY=base64:" .env; then
+              php artisan key:generate --force
+            fi
 
             echo "🗄️ Exécution des migrations de base de données..."
             php artisan migrate --force
