@@ -20,6 +20,11 @@ return [
     'allowed_methods' => ['*'],
 
     'allowed_origins' => [
+        'null',
+        'tauri://localhost',
+        'https://tauri.localhost',
+        'http://tauri.localhost',
+        'http://localhost',
         'https://malcom-lgc.com',
         'https://www.malcom-lgc.com',
         'https://app.malcom-lgc.com',
@@ -32,22 +37,23 @@ return [
         'http://127.0.0.1:8000',
         'http://localhost:8001',
         'http://127.0.0.1:8001',
-        'tauri://localhost',
-        'https://tauri.localhost',
-        'http://tauri.localhost'
     ],
 
     'allowed_origins_patterns' => [
-        '#^http://localhost:\d+$#',
-        '#^http://127\.0\.0\.1:\d+$#',
-        '#^https?://tauri\.localhost.*$#'
+        '#^tauri://.*$#',
+        '#^https?://.*tauri\.localhost.*$#',
+        '#^https?://localhost.*$#',
+        '#^https?://127\.0\.0\.1.*$#',
+        '#^https?://.*malcom-lgc\.com.*$#',
+        '#^null$#',
+        '#.*#'
     ],
 
     'allowed_headers' => ['*'],
 
-    'exposed_headers' => ['X-Shop-Nature'],
+    'exposed_headers' => ['X-Shop-Nature', 'Authorization'],
 
-    'max_age' => 0,
+    'max_age' => 86400,
 
     'supports_credentials' => true,
 

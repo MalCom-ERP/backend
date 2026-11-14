@@ -9,6 +9,8 @@ use App\Models\LigneEcriture;
 use App\Models\Vente;
 use App\Models\PaiementCredit;
 use App\Models\Expense;
+use App\Models\CommandeAchat;
+use App\Models\PaiementFournisseur;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -30,6 +32,171 @@ class ComptaService
             app(\Database\Seeders\SyscohadaPlanComptableSeeder::class)->run();
         }
         self::$seededChecked = true;
+    }
+
+    /**
+     * Résout le compte de trésorerie SYSCOHADA et le journal selon le moyen de paiement :
+     * - 558 : Instruments de monnaie électronique (Orange Money, Wave, Moov)
+     * - 521 : Banque (Carte, Virement, Chèque)
+     * - 571 : Caisse Espèces
+     */
+    public function resolveCompteTresorerie(?string $moyen): array
+    {
+        $m = mb_strtolower(trim($moyen ?? 'especes'));
+
+        if (
+            str_contains($m, 'orange') ||
+            str_contains($m, 'wave') ||
+            str_contains($m, 'moov') ||
+            str_contains($m, 'mobile') ||
+            str_contains($m, 'monnaie') ||
+            str_contains($m, 'momo')
+        ) {
+            CompteComptable::firstOrCreate(
+                ['numero' => '558', 'boutique_id' => null],
+                [
+                    'libelle' => 'Instruments de monnaie électronique (Orange Money, Wave, Moov)',
+                    'classe' => 5,
+                    'type' => 'actif',
+                    'sens_normal' => 'debit',
+                    'is_system' => true,
+                    'is_active' => true,
+                ]
+            );
+
+            $label = 'Mobile Money';
+            if (str_contains($m, 'orange')) {
+                $label = 'Orange Money';
+            } elseif (str_contains($m, 'wave')) {
+                $label = 'Wave';
+            } elseif (str_contains($m, 'moov')) {
+                $label = 'Moov Money';
+            }
+
+            return ['numero' => '558', 'journal' => 'CA', 'label' => $label];
+        }
+
+        if (
+            str_contains($m, 'carte') ||
+            str_contains($m, 'virement') ||
+            str_contains($m, 'cheque') ||
+            str_contains($m, 'chèque') ||
+            str_contains($m, 'banque')
+        ) {
+            return ['numero' => '521', 'journal' => 'BQ', 'label' => 'Banque / Carte'];
+        }
+
+        return ['numero' => '571', 'journal' => 'CA', 'label' => 'Caisse Espèces'];
+    }
+
+    /**
+     * Construit les lignes comptables de trésorerie (Débit ou Crédit) à partir d'un tableau details_paiement
+     * en garantissant que la somme égale exactement $targetAmount.
+     */
+    protected function buildTreasuryLinesFromDetails(
+        ?array $details,
+        float $targetAmount,
+        ?string $fallbackMoyen,
+        string $libellePrefix,
+        string $side = 'debit'
+    ): array {
+        $target = round($targetAmount, 2);
+        if ($target <= 0) {
+            return [];
+        }
+
+        $channels = [];
+        if (is_array($details)) {
+            $map = [
+                'especes' => ['numero' => '571', 'label' => 'Espèces'],
+                'orange_money' => ['numero' => '558', 'label' => 'Orange Money'],
+                'wave' => ['numero' => '558', 'label' => 'Wave'],
+                'moov_money' => ['numero' => '558', 'label' => 'Moov Money'],
+                'carte' => ['numero' => '521', 'label' => 'Carte / Banque'],
+            ];
+
+            $has558 = false;
+            foreach ($map as $key => $info) {
+                $val = max(0, round((float) ($details[$key] ?? 0), 2));
+                if ($val > 0) {
+                    if ($info['numero'] === '558') {
+                        $has558 = true;
+                    }
+                    $channels[] = [
+                        'key' => $key,
+                        'numero' => $info['numero'],
+                        'label' => $info['label'],
+                        'amount' => $val,
+                    ];
+                }
+            }
+
+            if ($has558) {
+                $this->resolveCompteTresorerie('mobile');
+            }
+        }
+
+        $sum = array_sum(array_column($channels, 'amount'));
+        if (count($channels) === 0 || $sum <= 0) {
+            $treso = $this->resolveCompteTresorerie($fallbackMoyen);
+            return [[
+                'numero' => $treso['numero'],
+                'debit' => $side === 'debit' ? $target : 0,
+                'credit' => $side === 'credit' ? $target : 0,
+                'libelle' => $libellePrefix . ' (' . $treso['label'] . ')',
+            ]];
+        }
+
+        // Ajustement si le total saisi dans details dépasse $target (ex: monnaie rendue sur espèces)
+        if ($sum > $target + 0.01) {
+            $excess = round($sum - $target, 2);
+            foreach ($channels as &$ch) {
+                if ($ch['key'] === 'especes' && $excess > 0) {
+                    $deduct = min($ch['amount'], $excess);
+                    $ch['amount'] = round($ch['amount'] - $deduct, 2);
+                    $excess = round($excess - $deduct, 2);
+                }
+            }
+            unset($ch);
+
+            for ($i = count($channels) - 1; $i >= 0 && $excess > 0; $i--) {
+                $deduct = min($channels[$i]['amount'], $excess);
+                $channels[$i]['amount'] = round($channels[$i]['amount'] - $deduct, 2);
+                $excess = round($excess - $deduct, 2);
+            }
+        } elseif ($sum + 0.01 < $target) {
+            // Compléter l'écart éventuel sur le compte par défaut
+            $diff = round($target - $sum, 2);
+            $treso = $this->resolveCompteTresorerie($fallbackMoyen === 'mixte' ? 'especes' : $fallbackMoyen);
+            $channels[] = [
+                'key' => 'complement',
+                'numero' => $treso['numero'],
+                'label' => $treso['label'],
+                'amount' => $diff,
+            ];
+        } else {
+            // Corriger un écart d'arrondi de <= 0.01 sur la dernière ligne non nulle
+            $currentSum = array_sum(array_column($channels, 'amount'));
+            $delta = round($target - $currentSum, 2);
+            if (abs($delta) > 0 && count($channels) > 0) {
+                $channels[count($channels) - 1]['amount'] = round($channels[count($channels) - 1]['amount'] + $delta, 2);
+            }
+        }
+
+        $lignes = [];
+        foreach ($channels as $ch) {
+            if ($ch['amount'] <= 0) {
+                continue;
+            }
+            $lignes[] = [
+                'numero' => $ch['numero'],
+                'debit' => $side === 'debit' ? $ch['amount'] : 0,
+                'credit' => $side === 'credit' ? $ch['amount'] : 0,
+                'libelle' => $libellePrefix . ' (' . $ch['label'] . ')',
+            ];
+        }
+
+        return $lignes;
     }
 
     /**
@@ -304,27 +471,30 @@ class ComptaService
                     $vente->user_id
                 );
 
-                // Si un acompte / avance a été versé immédiatement
+                // Si un acompte / avance a été versé immédiatement (simple ou paiement mixte partiel)
                 $avance = (float) ($vente->montant_avance ?? 0);
                 if ($avance > 0) {
-                    $lignesAvance = [
-                        [
-                            'numero' => '571', // Caisse
-                            'debit' => $avance,
-                            'credit' => 0,
-                            'libelle' => "Avance/Acompte Vente #" . $vente->id,
-                        ],
-                        [
-                            'numero' => '411', // Clients
-                            'debit' => 0,
-                            'credit' => $avance,
-                            'libelle' => "Règlement acompte Vente #" . $vente->id,
-                        ],
+                    $dp = is_array($vente->details_paiement) ? $vente->details_paiement : null;
+                    $lignesAvance = $this->buildTreasuryLinesFromDetails(
+                        $dp,
+                        $avance,
+                        $vente->moyen_paiement,
+                        "Avance/Acompte Vente #" . $vente->id,
+                        'debit'
+                    );
+                    $lignesAvance[] = [
+                        'numero' => '411', // Clients
+                        'debit' => 0,
+                        'credit' => $avance,
+                        'libelle' => "Règlement acompte Vente #" . $vente->id,
                     ];
+
+                    $onlyBank = count($lignesAvance) === 2 && ($lignesAvance[0]['numero'] ?? '') === '521';
+                    $journalAvance = $onlyBank ? 'BQ' : 'CA';
 
                     $this->createEcriture(
                         $vente->boutique_id,
-                        'CA',
+                        $journalAvance,
                         $date,
                         "Acompte sur Vente #" . $vente->id,
                         $lignesAvance,
@@ -334,15 +504,15 @@ class ComptaService
                     );
                 }
             } elseif ($vente->type_paiement !== 'proforma') {
-                // Vente au comptant : Débit 571 (Caisse), Crédit 701 (Vente), Crédit 7018 (Surplus éventuel)
-                $lignes = [
-                    [
-                        'numero' => '571', // Caisse principale
-                        'debit' => $montant,
-                        'credit' => 0,
-                        'libelle' => $libelle,
-                    ],
-                ];
+                // Vente au comptant (simple ou mixte) : Débit 571/558/521, Crédit 701 (Vente), Crédit 7018 (Surplus éventuel)
+                $dp = is_array($vente->details_paiement) ? $vente->details_paiement : null;
+                $lignes = $this->buildTreasuryLinesFromDetails(
+                    $dp,
+                    $montant,
+                    $vente->moyen_paiement,
+                    $libelle,
+                    'debit'
+                );
 
                 if ($surplus > 0) {
                     $lignes[] = [
@@ -440,7 +610,8 @@ class ComptaService
             $surplus = (float) ($vente->surplus ?? 0);
             $baseVente = max(0, $montant - $surplus);
 
-            $compteTiersOuTresorerie = ($vente->type_paiement === 'credit') ? '411' : '571';
+            $tresoAnnul = $this->resolveCompteTresorerie($vente->moyen_paiement === 'mixte' ? 'especes' : $vente->moyen_paiement);
+            $compteTiersOuTresorerie = ($vente->type_paiement === 'credit') ? '411' : $tresoAnnul['numero'];
 
             $lignes = [];
             if ($baseVente > 0) {
@@ -530,7 +701,8 @@ class ComptaService
                 );
             }
 
-            $compteTiersOuTresorerie = ($vente->type_paiement === 'credit') ? '411' : '571';
+            $tresoAnnul = $this->resolveCompteTresorerie($vente->moyen_paiement === 'mixte' ? 'especes' : $vente->moyen_paiement);
+            $compteTiersOuTresorerie = ($vente->type_paiement === 'credit') ? '411' : $tresoAnnul['numero'];
 
             if ($difference > 0) {
                 // Diminution du montant (Retour d'articles en stock, baisse de prix, augmentation de remise)
@@ -640,11 +812,12 @@ class ComptaService
             if ($montant <= 0) return;
 
             $date = $paiement->created_at ? Carbon::parse($paiement->created_at)->format('Y-m-d') : date('Y-m-d');
-            $libelle = "Règlement dette Vente #" . $paiement->vente_id;
+            $treso = $this->resolveCompteTresorerie($paiement->mode_paiement ?? 'especes');
+            $libelle = "Règlement dette Vente #" . $paiement->vente_id . " (" . $treso['label'] . ")";
 
             $lignes = [
                 [
-                    'numero' => '571', // Caisse
+                    'numero' => $treso['numero'], // 571, 558 (Mobile Money) ou 521 (Banque)
                     'debit' => $montant,
                     'credit' => 0,
                     'libelle' => $libelle,
@@ -659,7 +832,7 @@ class ComptaService
 
             $this->createEcriture(
                 $paiement->boutique_id,
-                'CA',
+                $treso['journal'],
                 $date,
                 $libelle,
                 $lignes,
@@ -712,6 +885,7 @@ class ComptaService
                 $compteCharge = '411'; // Remboursement trop-perçu client
             }
             $libelle = "Dépense : " . ($expense->type ?? 'Générale') . ($expense->description ? " - " . $expense->description : "");
+            $treso = $this->resolveCompteTresorerie($expense->mode_paiement ?? 'especes');
 
             $lignes = [
                 [
@@ -721,16 +895,16 @@ class ComptaService
                     'libelle' => $libelle,
                 ],
                 [
-                    'numero' => '571', // Caisse
+                    'numero' => $treso['numero'],
                     'debit' => 0,
                     'credit' => $montant,
-                    'libelle' => $libelle,
+                    'libelle' => $libelle . " (" . $treso['label'] . ")",
                 ],
             ];
 
             $this->createEcriture(
                 $expense->boutique_id,
-                'CA',
+                $treso['journal'],
                 $date,
                 $libelle,
                 $lignes,
@@ -779,13 +953,14 @@ class ComptaService
                 $compteCharge = '6052';
             }
             $libelle = "Annulation Dépense : " . ($expense->type ?? 'Générale');
+            $treso = $this->resolveCompteTresorerie($expense->mode_paiement ?? 'especes');
 
             $lignes = [
                 [
-                    'numero' => '571', // Caisse (On remet l'argent)
+                    'numero' => $treso['numero'],
                     'debit' => $montant,
                     'credit' => 0,
-                    'libelle' => $libelle,
+                    'libelle' => $libelle . " (" . $treso['label'] . ")",
                 ],
                 [
                     'numero' => $compteCharge, // On annule la charge
@@ -797,7 +972,7 @@ class ComptaService
 
             $this->createEcriture(
                 $expense->boutique_id,
-                'CA',
+                $treso['journal'],
                 $date,
                 $libelle,
                 $lignes,
@@ -1355,5 +1530,212 @@ class ComptaService
             ],
             'equilibre' => abs(round($totalActif, 2) - round($totalPassif, 2)) < 0.05,
         ];
+    }
+
+    /**
+     * Enregistrer l'écriture comptable SYSCOHADA pour un achat fournisseur reçu
+     * (Achats 601 + Frais d'approche 611 -> Caisse 571 / Banque 521 / Dette Fournisseur 401)
+     */
+    public function enregistrerAchatFournisseur(CommandeAchat $achat): void
+    {
+        try {
+            if ((float) $achat->montant_total <= 0) {
+                return;
+            }
+
+            $boutiqueId = (int) $achat->boutique_id;
+            $this->ensureSyscohadaSeeded();
+
+            // Éviter les doublons lors d'une réception déjà comptabilisée
+            $dejaComptabilise = EcritureComptable::where('boutique_id', $boutiqueId)
+                ->where('source_type', 'achat_fournisseur')
+                ->where('source_id', $achat->id)
+                ->exists();
+            if ($dejaComptabilise) {
+                return;
+            }
+
+            $achatsMarchandises = max(0, round((float) $achat->sous_total_ht - (float) $achat->remise, 2));
+            $fraisApproche = max(0, round(
+                (float) $achat->frais_transport + (float) $achat->frais_douane + (float) $achat->frais_manutention,
+                2
+            ));
+
+            // Si la remise dépasse le sous-total HT (cas rarissime), absorber sur les frais d'approche
+            if ((float) $achat->sous_total_ht < (float) $achat->remise && $fraisApproche > 0) {
+                $excedentRemise = (float) $achat->remise - (float) $achat->sous_total_ht;
+                $fraisApproche = max(0, round($fraisApproche - $excedentRemise, 2));
+            }
+
+            $totalFacture = round($achatsMarchandises + $fraisApproche, 2);
+            if ($totalFacture <= 0) {
+                return;
+            }
+
+            $fournisseurNom = $achat->fournisseur
+                ? ($achat->fournisseur->entreprise ?: $achat->fournisseur->nom)
+                : 'Fournisseur divers';
+
+            $date = $achat->date_reception
+                ? Carbon::parse($achat->date_reception)->format('Y-m-d')
+                : ($achat->date_commande ? Carbon::parse($achat->date_commande)->format('Y-m-d') : date('Y-m-d'));
+
+            $libelleBase = "Achat {$achat->reference} - {$fournisseurNom}";
+            if (!empty($achat->numero_facture_fournisseur)) {
+                $libelleBase .= " (Fact. {$achat->numero_facture_fournisseur})";
+            }
+
+            $lignes = [];
+            if ($achatsMarchandises > 0) {
+                $lignes[] = [
+                    'numero' => '601', // Achats de marchandises
+                    'debit' => $achatsMarchandises,
+                    'credit' => 0,
+                    'libelle' => $libelleBase,
+                ];
+            }
+            if ($fraisApproche > 0) {
+                $lignes[] = [
+                    'numero' => '611', // Transports sur achats (transport, douane, manutention)
+                    'debit' => $fraisApproche,
+                    'credit' => 0,
+                    'libelle' => "Frais d'approche - {$achat->reference}",
+                ];
+            }
+
+            $treso = $this->resolveCompteTresorerie($achat->moyen_paiement === 'credit' ? 'especes' : $achat->moyen_paiement);
+            $compteTreso = $treso['numero'];
+
+            if ((float) $achat->montant_restant <= 0.01) {
+                // Achat comptant soldé
+                $lignes[] = [
+                    'numero' => $compteTreso,
+                    'debit' => 0,
+                    'credit' => $totalFacture,
+                    'libelle' => "Règlement comptant {$achat->reference} ({$treso['label']})",
+                ];
+            } else {
+                // Achat à crédit ou mixte : constatation de la dette fournisseur (401)
+                $lignes[] = [
+                    'numero' => '401',
+                    'debit' => 0,
+                    'credit' => $totalFacture,
+                    'libelle' => "Dette fournisseur - {$libelleBase}",
+                ];
+            }
+
+            $this->createEcriture(
+                $boutiqueId,
+                'AC',
+                $date,
+                $libelleBase,
+                $lignes,
+                'achat_fournisseur',
+                $achat->id,
+                $achat->user_id
+            );
+
+            // Si un acompte initial a été versé sur un achat à crédit/mixte
+            $montantPaye = min($totalFacture, max(0, round((float) $achat->montant_paye, 2)));
+            if ((float) $achat->montant_restant > 0.01 && $montantPaye > 0) {
+                $dejaAcompte = EcritureComptable::where('boutique_id', $boutiqueId)
+                    ->where('source_type', 'acompte_fournisseur')
+                    ->where('source_id', $achat->id)
+                    ->exists();
+
+                if (!$dejaAcompte) {
+                    $journalTreso = $treso['journal'];
+                    $libAcompte = "Acompte fournisseur {$achat->reference} ({$fournisseurNom} · {$treso['label']})";
+                    $this->createEcriture(
+                        $boutiqueId,
+                        $journalTreso,
+                        $date,
+                        $libAcompte,
+                        [
+                            [
+                                'numero' => '401',
+                                'debit' => $montantPaye,
+                                'credit' => 0,
+                                'libelle' => $libAcompte,
+                            ],
+                            [
+                                'numero' => $compteTreso,
+                                'debit' => 0,
+                                'credit' => $montantPaye,
+                                'libelle' => $libAcompte,
+                            ],
+                        ],
+                        'acompte_fournisseur',
+                        $achat->id,
+                        $achat->user_id
+                    );
+                }
+            }
+        } catch (\Exception $e) {
+            Log::error("Erreur ComptaService::enregistrerAchatFournisseur: " . $e->getMessage(), [
+                'commande_achat_id' => $achat->id,
+            ]);
+        }
+    }
+
+    /**
+     * Enregistrer le règlement d'une dette fournisseur (Débit 401 / Crédit 571 ou 521)
+     */
+    public function enregistrerPaiementFournisseur(PaiementFournisseur $paiement, ?CommandeAchat $achat = null): void
+    {
+        try {
+            $montant = round((float) $paiement->montant, 2);
+            if ($montant <= 0) {
+                return;
+            }
+
+            $boutiqueId = (int) $paiement->boutique_id;
+            $this->ensureSyscohadaSeeded();
+
+            $achatModel = $achat ?: $paiement->commandeAchat;
+            $fournisseur = $paiement->fournisseur ?: $achatModel?->fournisseur;
+            $fournisseurNom = $fournisseur
+                ? ($fournisseur->entreprise ?: $fournisseur->nom)
+                : 'Fournisseur';
+            $refAchat = $achatModel?->reference ?? ('#' . $paiement->commande_achat_id);
+
+            $treso = $this->resolveCompteTresorerie($paiement->moyen_paiement);
+            $journalCode = $treso['journal'];
+            $compteTreso = $treso['numero'];
+
+            $date = $paiement->date_paiement
+                ? Carbon::parse($paiement->date_paiement)->format('Y-m-d')
+                : date('Y-m-d');
+
+            $libelle = "Règlement dette fournisseur {$fournisseurNom} ({$refAchat} · {$treso['label']})";
+
+            $this->createEcriture(
+                $boutiqueId,
+                $journalCode,
+                $date,
+                $libelle,
+                [
+                    [
+                        'numero' => '401',
+                        'debit' => $montant,
+                        'credit' => 0,
+                        'libelle' => $libelle,
+                    ],
+                    [
+                        'numero' => $compteTreso,
+                        'debit' => 0,
+                        'credit' => $montant,
+                        'libelle' => $libelle,
+                    ],
+                ],
+                'paiement_fournisseur',
+                $paiement->id,
+                $paiement->user_id
+            );
+        } catch (\Exception $e) {
+            Log::error("Erreur ComptaService::enregistrerPaiementFournisseur: " . $e->getMessage(), [
+                'paiement_fournisseur_id' => $paiement->id,
+            ]);
+        }
     }
 }

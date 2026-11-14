@@ -14,6 +14,9 @@
     <table class="header-table">
         <tr>
             <td style="width: 58%;">
+                @if(!empty($boutique->logo))
+                    <img src="{{ $boutique->logo }}" alt="Logo" style="max-height: 45px; max-width: 140px; margin-bottom: 6px; object-fit: contain;"><br>
+                @endif
                 <div style="font-size: 14pt; font-weight: 900; color: #0f172a; text-transform: uppercase; letter-spacing: 0.5px;">
                     {{ $boutique->nom ?? 'MALCOM COMMERCE' }}
                 </div>

@@ -48,6 +48,7 @@ class FactureController extends Controller
         $produitAchat = [];
         $totalAvance = 0;
         $totalRestant = 0;
+        $totalConsigne = 0;
         $boutique = null;
         $firstVente = null;
 
@@ -57,15 +58,9 @@ class FactureController extends Controller
                     $totalAvance += ($fv->vente->montant_avance ?? 0);
                     $totalRestant += ($fv->vente->montant_restant ?? 0);
                     foreach ($fv->vente->detailVentes as $dv) {
-                        $produitAchat[] = [
-                            'nomProduit' => $dv->produit ? $dv->produit->nom : 'Produit inconnu',
-                            'quantite' => $dv->quantite,
-                            'prixUnitaire' => $dv->prix_unitaire,
-                            'prixBase' => $dv->prix_base ?? $dv->prix_unitaire,
-                            'surplus' => (float)($dv->surplus ?? 0),
-                            'remise' => (float)($dv->remise ?? 0),
-                            'montant' => $dv->montant
-                        ];
+                        $line = $this->formatDetailLigne($dv);
+                        $totalConsigne += $line['montant_consigne'];
+                        $produitAchat[] = $line;
                     }
                 }
             }
@@ -92,15 +87,9 @@ class FactureController extends Controller
             $statut = $vente->statut;
 
             foreach ($vente->detailVentes as $dv) {
-                $produitAchat[] = [
-                    'nomProduit' => $dv->produit ? $dv->produit->nom : 'Produit inconnu',
-                    'quantite' => $dv->quantite,
-                    'prixUnitaire' => $dv->prix_unitaire,
-                    'prixBase' => $dv->prix_base ?? $dv->prix_unitaire,
-                    'surplus' => (float)($dv->surplus ?? 0),
-                    'remise' => (float)($dv->remise ?? 0),
-                    'montant' => $dv->montant
-                ];
+                $line = $this->formatDetailLigne($dv);
+                $totalConsigne += $line['montant_consigne'];
+                $produitAchat[] = $line;
             }
         }
 
@@ -115,7 +104,7 @@ class FactureController extends Controller
         $descriptionFacture = $boutique->description_facture ?? $boutique->description ?? 'Commerce Général & Vente au détail';
         $couleurPrincipale = $boutique->couleur_principale ?? '#4f46e5';
         $couleurSecondaire = $boutique->couleur_secondaire ?? '#10b981';
-        $logo = $boutique->logo ?? '';
+        $logo = $boutique ? ($boutique->getEffectiveLogo() ?? '') : '';
 
         $moyenPaiement = $firstVente ? ($firstVente->moyen_paiement ?: $firstVente->type_paiement) : ($statut ?? 'especes');
         $montantRecu = $firstVente ? ($firstVente->montant_recu ?? 0) : 0;
@@ -128,6 +117,7 @@ class FactureController extends Controller
             'adresseClient' => $adresseClient,
             'dateFacture' => $dateFacture,
             'montant_total' => $montantTotal,
+            'montant_consigne_total' => round($totalConsigne, 2),
             'montant_remis' => $firstVente ? ($firstVente->remise ?: ($firstVente->detailVentes->first()->remise ?? 0)) : 0,
             'surplus' => (float)($firstVente?->surplus ?? 0),
             'montant_avance' => $totalAvance,
@@ -151,6 +141,43 @@ class FactureController extends Controller
         ];
 
         return response()->json([$response]);
+    }
+
+    /**
+     * Formate une ligne de détail de vente avec les métadonnées Module 5 (lot, péremption, IMEI/série, garantie, consigne).
+     */
+    private function formatDetailLigne($dv): array
+    {
+        $produit = $dv->produit;
+        $rawImeis = $dv->numeros_serie ?? [];
+        if (is_string($rawImeis)) {
+            $decoded = json_decode($rawImeis, true);
+            $rawImeis = is_array($decoded) ? $decoded : [];
+        }
+
+        $rawPeremption = $dv->date_peremption ?? $produit?->date_peremption;
+        $datePeremption = $rawPeremption
+            ? \Carbon\Carbon::parse($rawPeremption)->format('Y-m-d')
+            : null;
+
+        return [
+            'nomProduit' => $produit ? $produit->nom : 'Produit inconnu',
+            'quantite' => $dv->quantite,
+            'prixUnitaire' => $dv->prix_unitaire,
+            'prixBase' => $dv->prix_base ?? $dv->prix_unitaire,
+            'surplus' => (float) ($dv->surplus ?? 0),
+            'remise' => (float) ($dv->remise ?? 0),
+            'montant' => $dv->montant,
+            'unite_vente' => $dv->unite_vente ?? null,
+            'numero_lot' => $dv->numero_lot ?? $produit?->numero_lot ?? null,
+            'date_peremption' => $datePeremption,
+            'numeros_serie' => array_values(array_filter(is_array($rawImeis) ? $rawImeis : [])),
+            'garantie_mois' => (int) ($dv->garantie_mois ?: ($produit?->duree_garantie_mois ?? 0)),
+            'quantite_consigne' => (int) ($dv->quantite_consigne ?? 0),
+            'montant_consigne' => (float) ($dv->montant_consigne ?? 0),
+            'statut_consigne' => $dv->statut_consigne ?? null,
+            'type_emballage' => $produit?->type_emballage ?? null,
+        ];
     }
 
     /**

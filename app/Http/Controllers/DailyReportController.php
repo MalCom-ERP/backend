@@ -539,17 +539,34 @@ class DailyReportController extends Controller
         foreach ($venteCredit as $vc) {
             $avance = (float)($vc->montant_avance ?? 0);
             if ($avance > 0) {
-                $modeAvance = strtolower(trim($vc->moyen_paiement ?: 'especes'));
-                if (str_contains($modeAvance, 'orange')) {
-                    $orangeMoney += $avance;
-                } elseif (str_contains($modeAvance, 'moov')) {
-                    $moovMoney += $avance;
-                } elseif (str_contains($modeAvance, 'wave')) {
-                    $wave += $avance;
-                } elseif (str_contains($modeAvance, 'carte') || str_contains($modeAvance, 'cheque') || str_contains($modeAvance, 'virement')) {
-                    $carteBancaire += $avance;
+                $dp = is_array($vc->details_paiement) ? $vc->details_paiement : null;
+                $dpSum = $dp ? (
+                    (float)($dp['especes'] ?? 0) +
+                    (float)($dp['orange_money'] ?? 0) +
+                    (float)($dp['moov_money'] ?? 0) +
+                    (float)($dp['wave'] ?? 0) +
+                    (float)($dp['carte'] ?? 0)
+                ) : 0;
+
+                if ($dp && $dpSum > 0) {
+                    $especesVentes += (float)($dp['especes'] ?? 0);
+                    $orangeMoney += (float)($dp['orange_money'] ?? 0);
+                    $moovMoney += (float)($dp['moov_money'] ?? 0);
+                    $wave += (float)($dp['wave'] ?? 0);
+                    $carteBancaire += (float)($dp['carte'] ?? 0);
                 } else {
-                    $especesVentes += $avance;
+                    $modeAvance = strtolower(trim($vc->moyen_paiement ?: 'especes'));
+                    if (str_contains($modeAvance, 'orange')) {
+                        $orangeMoney += $avance;
+                    } elseif (str_contains($modeAvance, 'moov')) {
+                        $moovMoney += $avance;
+                    } elseif (str_contains($modeAvance, 'wave')) {
+                        $wave += $avance;
+                    } elseif (str_contains($modeAvance, 'carte') || str_contains($modeAvance, 'cheque') || str_contains($modeAvance, 'virement')) {
+                        $carteBancaire += $avance;
+                    } else {
+                        $especesVentes += $avance;
+                    }
                 }
             }
         }

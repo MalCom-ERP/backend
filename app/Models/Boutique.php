@@ -29,6 +29,7 @@ class Boutique extends Model
         'devise',
         'format_facture',
         'nature_id',
+        'type_etablissement',
         'date_expiration_licence'
     ];
 
@@ -36,6 +37,98 @@ class Boutique extends Model
         'date_expiration_licence' => 'datetime',
         'is_active' => 'boolean',
     ];
+
+    /**
+     * Nettoie/normalise le logo de la boutique (ignore les base64 tronqués et normalise /api/media).
+     */
+    public function getLogoAttribute($value): ?string
+    {
+        if (empty($value) || !is_string($value)) {
+            return null;
+        }
+
+        $trimmed = trim($value);
+        if ($trimmed === '') {
+            return null;
+        }
+
+        if (str_starts_with($trimmed, 'data:image/')) {
+            return strlen($trimmed) > 260 ? $trimmed : null;
+        }
+
+        if (preg_match('#/(?:storage|api/media)/([^/]+)/([^?\#]+)#', $trimmed, $m)) {
+            $base = (!app()->runningInConsole() && request())
+                ? rtrim(request()->getSchemeAndHttpHost(), '/')
+                : rtrim((string) config('app.url'), '/');
+
+            return $base . '/api/media/' . $m[1] . '/' . $m[2];
+        }
+
+        if (!str_starts_with($trimmed, 'http') && str_contains($trimmed, '/')) {
+            $base = (!app()->runningInConsole() && request())
+                ? rtrim(request()->getSchemeAndHttpHost(), '/')
+                : rtrim((string) config('app.url'), '/');
+
+            return $base . '/api/media/' . ltrim($trimmed, '/');
+        }
+
+        return $trimmed;
+    }
+
+    /**
+     * Retourne le logo de la boutique ou celui de la maison mère si la filiale n'a pas de logo propre.
+     */
+    public function getEffectiveLogo(): ?string
+    {
+        if (!empty($this->logo)) {
+            return $this->logo;
+        }
+
+        if (method_exists($this, 'getRootBoutique')) {
+            $root = $this->getRootBoutique();
+            if ($root && $root->id !== $this->id && !empty($root->logo)) {
+                return $root->logo;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Convertit le logo effectif en Data URI base64 pour DomPDF afin d'éviter les blocages réseau/HTTP locaux.
+     */
+    public function getLogoForPdf(): ?string
+    {
+        $logo = $this->getEffectiveLogo();
+        if (empty($logo)) {
+            return null;
+        }
+
+        if (str_starts_with($logo, 'data:image/')) {
+            return $logo;
+        }
+
+        if (preg_match('#/(?:storage|api/media)/([^/]+)/([^?\#]+)#', $logo, $m)) {
+            $folder = basename($m[1]);
+            $filename = basename($m[2]);
+            $candidates = [
+                storage_path('app/public/' . $folder . '/' . $filename),
+                public_path('storage/' . $folder . '/' . $filename),
+            ];
+
+            foreach ($candidates as $path) {
+                if (is_file($path) && is_readable($path)) {
+                    $mime = @mime_content_type($path) ?: 'image/png';
+                    $content = @file_get_contents($path);
+                    if ($content !== false) {
+                        return 'data:' . $mime . ';base64,' . base64_encode($content);
+                    }
+                }
+            }
+        }
+
+        return $logo;
+    }
 
     public function licences()
     {

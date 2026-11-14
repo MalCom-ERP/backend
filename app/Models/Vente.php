@@ -16,6 +16,7 @@ class Vente extends Model
         'montant_total' => 'float',
         'montant_avance' => 'float',
         'montant_restant' => 'float',
+        'details_paiement' => 'array',
     ];
     // On definit la relation entre les ventes et les produits
     public function produit()
@@ -52,6 +53,11 @@ class Vente extends Model
     public function paiementsCredit()
     {
         return $this->hasMany(PaiementCredit::class);
+    }
+
+    public function bonEnlevement()
+    {
+        return $this->hasOne(BonEnlevement::class, 'vente_id');
     }
 
     public function getIsCreditAttribute()

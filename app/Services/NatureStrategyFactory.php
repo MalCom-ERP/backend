@@ -8,6 +8,10 @@ use App\Contracts\ShopNatureStrategy;
 use App\Strategies\DefaultStrategy;
 use App\Strategies\VetementStrategy;
 use App\Strategies\CarburantStrategy;
+use App\Strategies\DepotBoissonStrategy;
+use App\Strategies\PiecesAutoStrategy;
+use App\Strategies\BoulangerieStrategy;
+use App\Strategies\AvicultureStrategy;
 use Exception;
 
 class NatureStrategyFactory
@@ -29,7 +33,14 @@ class NatureStrategyFactory
                 return new VetementStrategy($nature);
             case 'carburant':
                 return new CarburantStrategy($nature);
-            // Add other cases here as needed
+            case 'depot_boisson':
+                return new DepotBoissonStrategy($nature);
+            case 'pieces_auto':
+                return new PiecesAutoStrategy($nature);
+            case 'boulangerie':
+                return new BoulangerieStrategy($nature);
+            case 'aviculture':
+                return new AvicultureStrategy($nature);
             default:
                 return new DefaultStrategy($nature);
         }
@@ -50,6 +61,14 @@ class NatureStrategyFactory
                 return new VetementStrategy($nature);
             case 'carburant':
                 return new CarburantStrategy($nature);
+            case 'depot_boisson':
+                return new DepotBoissonStrategy($nature);
+            case 'pieces_auto':
+                return new PiecesAutoStrategy($nature);
+            case 'boulangerie':
+                return new BoulangerieStrategy($nature);
+            case 'aviculture':
+                return new AvicultureStrategy($nature);
             default:
                 return new DefaultStrategy($nature);
         }

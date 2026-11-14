@@ -24,6 +24,9 @@ Route::post('/logout', [AuthController::class, 'logout'])->middleware('auth:sanc
 Route::post('/licences/activer', [LicenceController::class, 'activer']);
 Route::get('/licences/statut/{boutique_id?}', [LicenceController::class, 'statut']);
 
+// Médias publics (images produits, logos boutiques) accessibles sans header Authorization
+Route::get('/media/{folder}/{filename}', [ProduitController::class, 'serveMedia'])->where('filename', '.*');
+
 // User and Boutique Status Check Routes (must be authenticated)
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/user/check-status', [UserStatusController::class, 'checkUserStatus']);
@@ -132,6 +135,24 @@ Route::middleware(['auth:sanctum', 'check.user.active', 'check.boutique.active']
         Route::get('transferts', [TransfertController::class, 'index']);
         Route::get('transferts/{id}', [TransfertController::class, 'show']);
         Route::post('transferts', [TransfertController::class, 'store']);
+
+        // Bons d'Enlèvement & Sorties d'Entrepôt
+        Route::get('bons-enlevement', [App\Http\Controllers\BonEnlevementController::class, 'index']);
+        Route::post('bons-enlevement', [App\Http\Controllers\BonEnlevementController::class, 'store']);
+        Route::get('bons-enlevement/{id}', [App\Http\Controllers\BonEnlevementController::class, 'show']);
+        Route::post('bons-enlevement/{id}/valider', [App\Http\Controllers\BonEnlevementController::class, 'validerEnlevement']);
+        Route::post('bons-enlevement/{id}/annuler', [App\Http\Controllers\BonEnlevementController::class, 'annuler']);
+
+        // Fournisseurs, Commandes / Réceptions d'Achats & Dettes (Compte 401 SYSCOHADA)
+        Route::get('fournisseurs', [App\Http\Controllers\FournisseurController::class, 'index']);
+        Route::post('fournisseurs', [App\Http\Controllers\FournisseurController::class, 'store']);
+        Route::get('fournisseurs/achats', [App\Http\Controllers\FournisseurController::class, 'achatsIndex']);
+        Route::post('fournisseurs/achats', [App\Http\Controllers\FournisseurController::class, 'achatStore']);
+        Route::get('fournisseurs/achats/{id}', [App\Http\Controllers\FournisseurController::class, 'achatShow']);
+        Route::post('fournisseurs/achats/{id}/receptionner', [App\Http\Controllers\FournisseurController::class, 'receptionner']);
+        Route::post('fournisseurs/achats/{id}/paiements', [App\Http\Controllers\FournisseurController::class, 'enregistrerPaiement']);
+        Route::put('fournisseurs/{id}', [App\Http\Controllers\FournisseurController::class, 'update']);
+        Route::delete('fournisseurs/{id}', [App\Http\Controllers\FournisseurController::class, 'destroy']);
 
         // Valorisation du Stock & Régularisation des Écarts (Axe 2)
         Route::get('stocks/valuation', [TransfertController::class, 'stockValuation']);

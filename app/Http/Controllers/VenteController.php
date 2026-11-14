@@ -8,9 +8,12 @@ use App\Models\Client;
 use App\Models\Expense;
 use App\Models\Facture;
 use App\Models\Produit;
+use App\Models\Boutique;
 use App\Models\Inventaire;
 use App\Models\DetailVente;
 use App\Models\FactureVente;
+use App\Models\BonEnlevement;
+use App\Models\BonEnlevementDetail;
 use Illuminate\Http\Request;
 use App\Models\PaiementCredit;
 use Illuminate\Support\Facades\DB;
@@ -496,7 +499,8 @@ class VenteController extends Controller
         $ventes = Vente::with([
             'detailVentes.produit',
             'user',
-            'client'
+            'client',
+            'bonEnlevement.entrepot'
         ])
             ->where('boutique_id', $boutique_id)
             ->whereIn('statut', ['validee', 'payee', 'credit'])
@@ -1102,7 +1106,11 @@ class VenteController extends Controller
             'produits' => 'required|array',
             'montant_total' => 'required|numeric',
             'date' => 'date',
-            'remise' => 'required|numeric',
+            'remise' => 'nullable|numeric',
+            'generer_bon_enlevement' => 'nullable|boolean',
+            'entrepot_enlevement_id' => 'nullable|integer|exists:boutiques,id',
+            'recepteur_nom' => 'nullable|string|max:150',
+            'chauffeur_immatriculation' => 'nullable|string|max:100',
         ]);
 
         $user = Auth::user();
@@ -1134,6 +1142,11 @@ class VenteController extends Controller
         }
 
         $is_proforma = $request->input('is_proforma', false);
+        $genererBon = !$is_proforma && $request->boolean('generer_bon_enlevement', false);
+        $entrepotEnlevementId = ($genererBon && $request->filled('entrepot_enlevement_id'))
+            ? (int) $request->input('entrepot_enlevement_id')
+            : (int) $boutique_id;
+        $enlevementAutreDepot = $genererBon && ($entrepotEnlevementId !== (int) $boutique_id);
 
         DB::beginTransaction();
         try {
@@ -1141,14 +1154,6 @@ class VenteController extends Controller
             $vente->client_id = $client_id;
             $vente->boutique_id = $boutique_id;
             $vente->user_id = $user->id;
-            $rawType = $is_proforma ? 'proforma' : ($request->type_paiement ?? 'contant');
-            $normalizedType = in_array($rawType, ['proforma', 'credit', 'contant']) ? $rawType : 'contant';
-            $vente->type_paiement = $normalizedType;
-            $vente->moyen_paiement = $request->input('moyen_paiement', ($normalizedType === 'credit' ? 'credit' : ($normalizedType === 'proforma' ? 'proforma' : $rawType)));
-            $vente->montant_recu = $request->input('montant_recu', 0);
-            $vente->monnaie_rendue = $request->input('monnaie_rendue', 0);
-            $vente->montant_avance = $request->montant_avance ?? 0;
-
             $vente->montant_total = $request->montant_total;
 
             // Calcul du surplus total si non fourni explicitement
@@ -1160,26 +1165,24 @@ class VenteController extends Controller
                 }
             }
             $vente->surplus = $request->input('surplus', $sumLineSurplus);
+            $vente->remise = $request->remise ?? 0;
 
-            if ($is_proforma) {
-                $vente->statut = 'proforma';
-                $vente->remise = $request->remise ?? 0;
-                $vente->montant_restant = $request->montant_total;
-            } else {
-                $vente->remise = $request->remise ?? 0;
-                $vente->statut = ($rawType === 'credit') ? 'credit' : 'payee';
-                $vente->montant_restant = ($rawType === 'credit')
-                    ? ($request->montant_total - $vente->montant_avance)
-                    : 0;
-            } 
+            $this->applyPaymentDetails($vente, $request->all(), $is_proforma);
 
             $vente->date_vente = $request->input('date', now()->format('Y-m-d'));
             $vente->save();
 
             $sumLineRemises = 0;
+            $totalConsigne = 0;
+            $produitsCache = [];
+            $bonDetailsData = [];
 
             foreach ($request->produits as $item) {
                 $pId = $item['produits']['id'] ?? 0;
+                if ($pId && !array_key_exists($pId, $produitsCache)) {
+                    $produitsCache[$pId] = Produit::find($pId);
+                }
+                $produitModel = $produitsCache[$pId] ?? null;
 
                 // if (!$pId) {
                 //     throw new \Exception("ID produit manquant dans la requête");
@@ -1191,12 +1194,39 @@ class VenteController extends Controller
                     ->where('boutique_id', $boutique_id)
                     ->first();
 
+                $stockForPricing = $stock;
+                $emplacementDepot = $stock?->emplacement;
+
                 if (!$is_proforma) {
-                    if (!$stock || $stock->quantite < $item['quantite']) {
-                        throw new \Exception("Stock insuffisant pour $pNom");
+                    if ($enlevementAutreDepot) {
+                        $stockEntrepot = Stock::where('produit_id', $pId)
+                            ->where('boutique_id', $entrepotEnlevementId)
+                            ->first();
+                        if (!$stockEntrepot || $stockEntrepot->quantite < $item['quantite']) {
+                            $dispoDepot = $stockEntrepot ? $stockEntrepot->quantite : 0;
+                            throw new \Exception("Stock insuffisant dans l'entrepôt sélectionné pour $pNom (disponible : $dispoDepot).");
+                        }
+                        $stockForPricing = $stockEntrepot ?: $stock;
+                        $emplacementDepot = $stockEntrepot->emplacement;
+                    } else {
+                        if (!$stock || $stock->quantite < $item['quantite']) {
+                            throw new \Exception("Stock insuffisant pour $pNom");
+                        }
+                        $stock->quantite -= $item['quantite'];
+                        $stock->save();
                     }
-                    $stock->quantite -= $item['quantite'];
-                    $stock->save();
+
+                    // Mise à jour automatique de l'index compteur pour les pompes carburant
+                    if ($produitModel && is_array($produitModel->config) && (isset($produitModel->config['type_carburant']) || isset($item['sale_mode']))) {
+                        $config = $produitModel->config;
+                        if (($item['sale_mode'] ?? '') === 'index' && isset($item['index_fin'])) {
+                            $config['compteur_initial'] = (float) $item['index_fin'];
+                        } else {
+                            $config['compteur_initial'] = round((float) ($config['compteur_initial'] ?? 0) + (float) $item['quantite'], 2);
+                        }
+                        $produitModel->config = $config;
+                        $produitModel->save();
+                    }
                 }
 
                 $detail = new DetailVente();
@@ -1205,7 +1235,7 @@ class VenteController extends Controller
                 $detail->quantite = $item['quantite'];
 
                 // Custom prices, surplus and discounts
-                $basePrice = $item['prix'] ?? ($item['produits']['stock']['prix_vente'] ?? ($stock->prix_vente ?? 0));
+                $basePrice = $item['prix'] ?? ($item['produits']['stock']['prix_vente'] ?? ($stockForPricing->prix_vente ?? 0));
                 $surplusUnitaire = (float)($item['surplus_unitaire'] ?? 0);
                 $surplusLine = $surplusUnitaire * $item['quantite'];
 
@@ -1222,9 +1252,30 @@ class VenteController extends Controller
                 $detail->montant_total = $detail->montant;
                 $detail->montant_paye = $detail->montant - $remiseLine;
                 $detail->quantite_restante = $item['quantite'];
+                $trace = $this->resolveLineTraceability($item, $produitModel, $stockForPricing, !$is_proforma);
+                $totalConsigne += $trace['montant_consigne'];
+
+                $detail->unite_vente = $item['unite_vente'] ?? ($item['produits']['unite_base'] ?? 'Unité');
+                $detail->quantite_conditionnement = max(1, (int)($item['quantite_conditionnement'] ?? ($item['produits']['quantite_conditionnement'] ?? 1)));
+                $detail->mode_tarif = $item['mode_tarif'] ?? 'detail';
+                $detail->numero_lot = $trace['numero_lot'];
+                $detail->date_peremption = $trace['date_peremption'];
+                $detail->numeros_serie = !empty($trace['numeros_serie']) ? json_encode($trace['numeros_serie']) : null;
+                $detail->garantie_mois = $trace['garantie_mois'];
+                $detail->quantite_consigne = $trace['quantite_consigne'];
+                $detail->montant_consigne = $trace['montant_consigne'];
+                $detail->statut_consigne = $trace['statut_consigne'];
                 $detail->save();
 
-                if (!$is_proforma) {
+                if ($genererBon) {
+                    $bonDetailsData[] = [
+                        'produit_id' => $pId,
+                        'quantite_commandee' => (int) $item['quantite'],
+                        'emplacement' => $emplacementDepot,
+                    ];
+                }
+
+                if (!$is_proforma && !$enlevementAutreDepot) {
                     Inventaire::create([
                         'produit_id' => $pId,
                         'boutique_id' => $boutique_id,
@@ -1232,7 +1283,7 @@ class VenteController extends Controller
                         'vente_id' => $vente->id,
                         'quantite' => $item['quantite'],
                         'type' => 'retrait',
-                        'prix_achat' => $stock ? $stock->prix_achat : 0,
+                        'prix_achat' => $stockForPricing ? $stockForPricing->prix_achat : 0,
                         'prix_vente' => $prixU,
                         'remise' => $remiseLine,
                         'surplus' => $surplusLine,
@@ -1242,8 +1293,12 @@ class VenteController extends Controller
                 }
             }
 
+            // Enregistrer le total des consignes calculé (ou transmis) sur la vente
+            $vente->montant_consigne_total = round($totalConsigne > 0 ? $totalConsigne : (float) $request->input('montant_consigne_total', 0), 2);
+            $vente->save();
+
             // Create virtual Inventaire record for the extra global reduction
-            if (!$is_proforma) {
+            if (!$is_proforma && !$enlevementAutreDepot) {
                 $extraReduction = (float)$vente->remise - $sumLineRemises;
                 if ($extraReduction != 0) {
                     Inventaire::create([
@@ -1262,6 +1317,7 @@ class VenteController extends Controller
                 }
             }
 
+            $bonEnlevement = null;
             if (!$is_proforma) {
                 $facture = Facture::create([
                     'client_id' => $client_id,
@@ -1279,13 +1335,42 @@ class VenteController extends Controller
 
                 // Génération de l'écriture comptable automatique SYSCOHADA
                 app(\App\Services\ComptaService::class)->enregistrerVente($vente);
+
+                if ($genererBon && !empty($bonDetailsData)) {
+                    $bonEnlevement = BonEnlevement::create([
+                        'reference' => BonEnlevementController::generateReference(),
+                        'vente_id' => $vente->id,
+                        'boutique_emettrice_id' => $boutique_id,
+                        'entrepot_id' => $entrepotEnlevementId,
+                        'client_id' => $client_id,
+                        'user_id' => $user->id,
+                        'statut' => 'en_attente',
+                        'stock_deja_deduit' => !$enlevementAutreDepot,
+                        'recepteur_nom' => $request->input('recepteur_nom') ?: ($request->filled('client_nom') && strtoupper($request->input('client_nom')) !== 'ANONYME' ? $request->input('client_nom') : null),
+                        'recepteur_telephone' => $request->input('client_numero'),
+                        'chauffeur_immatriculation' => $request->input('chauffeur_immatriculation'),
+                        'date_emission' => now(),
+                    ]);
+
+                    foreach ($bonDetailsData as $bd) {
+                        BonEnlevementDetail::create([
+                            'bon_enlevement_id' => $bonEnlevement->id,
+                            'produit_id' => $bd['produit_id'],
+                            'quantite_commandee' => $bd['quantite_commandee'],
+                            'quantite_livree' => 0,
+                            'emplacement' => $bd['emplacement'],
+                        ]);
+                    }
+                }
             }
 
             DB::commit();
             return response()->json([
                 'message' => $is_proforma ? 'Pro-forma généré' : 'Vente effectuée',
                 'venteID' => $vente->id,
-                'factID' => isset($facture) ? $facture->id : null
+                'factID' => isset($facture) ? $facture->id : null,
+                'bonEnlevementID' => $bonEnlevement?->id,
+                'bonEnlevement' => $bonEnlevement ? $bonEnlevement->load(['entrepot', 'boutiqueEmettrice', 'details.produit']) : null,
             ], 201);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -1342,18 +1427,11 @@ class VenteController extends Controller
                     $client_id = $client->id;
                 }
 
-                $typePaiement = $vData['type_paiement'] ?? 'contant';
-                $normalizedType = in_array($typePaiement, ['proforma', 'credit', 'contant']) ? $typePaiement : 'contant';
                 $vente = new Vente();
                 $vente->client_id = $client_id;
                 $vente->boutique_id = $boutique_id;
                 $vente->user_id = $user->id;
                 $vente->montant_total = $vData['montant_total'];
-                $vente->type_paiement = $normalizedType;
-                $vente->moyen_paiement = $vData['moyen_paiement'] ?? ($normalizedType === 'credit' ? 'credit' : $typePaiement);
-                $vente->montant_recu = $vData['montant_recu'] ?? 0;
-                $vente->monnaie_rendue = $vData['monnaie_rendue'] ?? 0;
-                $vente->montant_avance = $vData['montant_avance'] ?? 0;
                 $vente->remise = $vData['remise'] ?? 0;
                 $sumOfflineSurplus = 0;
                 if (!empty($vData['produits']) && is_array($vData['produits'])) {
@@ -1363,15 +1441,19 @@ class VenteController extends Controller
                     }
                 }
                 $vente->surplus = $vData['surplus'] ?? $sumOfflineSurplus;
-                $vente->statut = ($typePaiement === 'credit') ? 'credit' : 'payee';
-                $vente->montant_restant = ($typePaiement === 'credit')
-                    ? ($vData['montant_total'] - $vente->montant_avance)
-                    : 0;
+                $this->applyPaymentDetails($vente, $vData, false);
                 $vente->date_vente = !empty($vData['date']) ? $vData['date'] : now()->format('Y-m-d');
                 $vente->save();
 
+                $totalOfflineConsigne = 0;
+                $offlineProduitsCache = [];
+
                 foreach ($vData['produits'] as $item) {
                     $pId = $item['produits']['id'] ?? ($item['id'] ?? 0);
+                    if ($pId && !array_key_exists($pId, $offlineProduitsCache)) {
+                        $offlineProduitsCache[$pId] = Produit::find($pId);
+                    }
+                    $produitModel = $offlineProduitsCache[$pId] ?? null;
                     $pNom = $item['produits']['nom'] ?? ($item['nom'] ?? "Produit #$pId");
 
                     $stock = Stock::where('produit_id', $pId)
@@ -1402,6 +1484,19 @@ class VenteController extends Controller
                     $detail->montant_total = $detail->montant;
                     $detail->montant_paye = $detail->montant - $remiseLine;
                     $detail->quantite_restante = $item['quantite'];
+                    $trace = $this->resolveLineTraceability($item, $produitModel, $stock, false);
+                    $totalOfflineConsigne += $trace['montant_consigne'];
+
+                    $detail->unite_vente = $item['unite_vente'] ?? ($item['produits']['unite_base'] ?? 'Unité');
+                    $detail->quantite_conditionnement = max(1, (int)($item['quantite_conditionnement'] ?? ($item['produits']['quantite_conditionnement'] ?? 1)));
+                    $detail->mode_tarif = $item['mode_tarif'] ?? 'detail';
+                    $detail->numero_lot = $trace['numero_lot'];
+                    $detail->date_peremption = $trace['date_peremption'];
+                    $detail->numeros_serie = !empty($trace['numeros_serie']) ? json_encode($trace['numeros_serie']) : null;
+                    $detail->garantie_mois = $trace['garantie_mois'];
+                    $detail->quantite_consigne = $trace['quantite_consigne'];
+                    $detail->montant_consigne = $trace['montant_consigne'];
+                    $detail->statut_consigne = $trace['statut_consigne'];
                     $detail->save();
 
                     Inventaire::create([
@@ -1419,6 +1514,9 @@ class VenteController extends Controller
                         'date' => $vente->date_vente,
                     ]);
                 }
+
+                $vente->montant_consigne_total = round($totalOfflineConsigne > 0 ? $totalOfflineConsigne : (float) ($vData['montant_consigne_total'] ?? 0), 2);
+                $vente->save();
 
                 $facture = Facture::create([
                     'client_id' => $client_id,
@@ -1532,20 +1630,10 @@ class VenteController extends Controller
             }
 
             // 2. Update Vente Identity
-            $rawType = $request->input('type_paiement', 'contant');
-            $normalizedType = in_array($rawType, ['proforma', 'credit', 'contant']) ? $rawType : 'contant';
-            $vente->type_paiement = $normalizedType;
-            $vente->moyen_paiement = $request->input('moyen_paiement', $rawType);
-            $vente->montant_recu = $request->input('montant_recu', 0);
-            $vente->monnaie_rendue = $request->input('monnaie_rendue', 0);
             $vente->remise = $venteRemise;
             $vente->surplus = (float)$vente->detailVentes->sum('surplus');
             $vente->montant_total = max(0, $totalBrut - $venteRemise);
-            $vente->montant_avance = $montant_avance;
-            $vente->statut = ($normalizedType === 'credit') ? 'credit' : 'payee';
-            $vente->montant_restant = ($normalizedType === 'credit')
-                ? ($vente->montant_total - $montant_avance)
-                : 0;
+            $this->applyPaymentDetails($vente, $request->all(), false);
             $vente->date_vente = now()->format('Y-m-d');
             $vente->save();
 
@@ -1555,7 +1643,7 @@ class VenteController extends Controller
                 'boutique_id' => $boutique_id,
                 'montant_total' => $vente->montant_total,
                 'date_facturation' => now()->format('Y-m-d'),
-                'statut' => ($type_paiement === 'credit' ? 'en attente' : 'payée'),
+                'statut' => ($vente->type_paiement === 'credit' ? 'en attente' : 'payée'),
                 'description' => 'Facture issue de Pro-forma #' . $vente->id
             ]);
 
@@ -1582,5 +1670,164 @@ class VenteController extends Controller
     public function destroy(Vente $vente)
     {
         return $this->supprimerVente($vente->id);
+    }
+
+    /**
+     * Normalise et applique les informations de paiement simple ou mixte (Espèces + Mobile Money + Carte + Crédit)
+     * sur une instance de Vente (après définition de montant_total).
+     */
+    private function applyPaymentDetails(Vente $vente, array $input, bool $isProforma = false): void
+    {
+        $montantTotal = max(0, (float) ($vente->montant_total ?? 0));
+
+        if ($isProforma) {
+            $vente->type_paiement = 'proforma';
+            $vente->moyen_paiement = 'proforma';
+            $vente->statut = 'proforma';
+            $vente->montant_avance = 0;
+            $vente->montant_recu = 0;
+            $vente->monnaie_rendue = 0;
+            $vente->montant_restant = $montantTotal;
+            $vente->details_paiement = null;
+            $vente->reference_paiement = null;
+            return;
+        }
+
+        $rawType = $input['type_paiement'] ?? 'contant';
+        $normalizedType = in_array($rawType, ['proforma', 'credit', 'contant']) ? $rawType : 'contant';
+        $moyenPaiement = $input['moyen_paiement'] ?? ($normalizedType === 'credit' ? 'credit' : $rawType);
+        $referencePaiement = $input['reference_paiement'] ?? null;
+
+        $rawDetails = $input['details_paiement'] ?? null;
+        if (is_string($rawDetails)) {
+            $rawDetails = json_decode($rawDetails, true);
+        }
+
+        if ($moyenPaiement === 'mixte' && is_array($rawDetails)) {
+            $dp = [
+                'especes' => max(0, round((float) ($rawDetails['especes'] ?? 0), 2)),
+                'wave' => max(0, round((float) ($rawDetails['wave'] ?? 0), 2)),
+                'orange_money' => max(0, round((float) ($rawDetails['orange_money'] ?? 0), 2)),
+                'moov_money' => max(0, round((float) ($rawDetails['moov_money'] ?? 0), 2)),
+                'carte' => max(0, round((float) ($rawDetails['carte'] ?? 0), 2)),
+                'credit' => 0,
+            ];
+
+            $totalEncaisseBrut = round(
+                $dp['especes'] + $dp['wave'] + $dp['orange_money'] + $dp['moov_money'] + $dp['carte'],
+                2
+            );
+
+            $vente->moyen_paiement = 'mixte';
+            $vente->reference_paiement = $referencePaiement;
+
+            if ($totalEncaisseBrut >= $montantTotal) {
+                $monnaieRendue = round($totalEncaisseBrut - $montantTotal, 2);
+                $dp['especes'] = max(0, round($dp['especes'] - min($dp['especes'], $monnaieRendue), 2));
+                $dp['credit'] = 0;
+
+                $vente->type_paiement = 'contant';
+                $vente->statut = 'payee';
+                $vente->montant_recu = $totalEncaisseBrut;
+                $vente->monnaie_rendue = $monnaieRendue;
+                $vente->montant_avance = 0;
+                $vente->montant_restant = 0;
+            } else {
+                $reliquatCredit = round($montantTotal - $totalEncaisseBrut, 2);
+                $dp['credit'] = $reliquatCredit;
+
+                $vente->type_paiement = 'credit';
+                $vente->statut = 'credit';
+                $vente->montant_recu = $totalEncaisseBrut;
+                $vente->monnaie_rendue = 0;
+                $vente->montant_avance = $totalEncaisseBrut;
+                $vente->montant_restant = $reliquatCredit;
+            }
+
+            $vente->details_paiement = $dp;
+            return;
+        }
+
+        $vente->type_paiement = $normalizedType;
+        $vente->moyen_paiement = $moyenPaiement;
+        $vente->details_paiement = is_array($rawDetails) ? $rawDetails : null;
+        $vente->reference_paiement = $referencePaiement;
+        $vente->montant_recu = round((float) ($input['montant_recu'] ?? 0), 2);
+        $vente->monnaie_rendue = round((float) ($input['monnaie_rendue'] ?? 0), 2);
+        $vente->montant_avance = round((float) ($input['montant_avance'] ?? 0), 2);
+        $vente->statut = ($normalizedType === 'credit') ? 'credit' : 'payee';
+        $vente->montant_restant = ($normalizedType === 'credit')
+            ? max(0, round($montantTotal - $vente->montant_avance, 2))
+            : 0;
+    }
+
+    /**
+     * Extrait et valide les métadonnées Module 5 (lot, péremption, IMEI/série, garantie, consigne) d'une ligne de vente.
+     */
+    private function resolveLineTraceability(array $item, ?Produit $produit, ?Stock $stock, bool $enforceImei = true): array
+    {
+        $rawImeis = !empty($item['numeros_serie']) ? $item['numeros_serie'] : ($item['imeis'] ?? []);
+        if (is_string($rawImeis)) {
+            $rawImeis = preg_split('/[\r\n,;]+/', trim($rawImeis)) ?: [];
+        }
+        $imeis = array_values(array_unique(array_filter(array_map(
+            fn($v) => trim((string) $v),
+            is_array($rawImeis) ? $rawImeis : []
+        ))));
+
+        $nomProduit = $item['produits']['nom'] ?? ($item['nom'] ?? $produit?->nom ?? 'Produit');
+        if ($enforceImei && $produit && $produit->exige_imei_serie && empty($imeis)) {
+            throw new \Exception("Le produit « {$nomProduit} » exige au moins un numéro IMEI ou N° de série.");
+        }
+
+        $qteVendue = max(1, (int) ($item['quantite'] ?? 1));
+        $inclureConsigne = array_key_exists('inclure_consigne', $item)
+            ? filter_var($item['inclure_consigne'], FILTER_VALIDATE_BOOLEAN)
+            : (bool) ($produit?->est_consignable);
+
+        $qteConsigne = 0;
+        $montantConsigne = 0.0;
+        $statutConsigne = null;
+
+        if ($produit && $produit->est_consignable) {
+            if ($inclureConsigne) {
+                $qteConsigne = array_key_exists('quantite_consigne', $item)
+                    ? max(0, (int) $item['quantite_consigne'])
+                    : $qteVendue;
+                $consigneU = (float) ($item['montant_consigne_unitaire'] ?? $produit->montant_consigne_unitaire ?? 0);
+                $montantConsigne = (array_key_exists('montant_consigne', $item) && $item['montant_consigne'] !== null && (float) $item['montant_consigne'] > 0)
+                    ? round((float) $item['montant_consigne'], 2)
+                    : round($qteConsigne * $consigneU, 2);
+                $statutConsigne = ($qteConsigne > 0 && $montantConsigne > 0)
+                    ? ($item['statut_consigne'] ?? 'en_cours')
+                    : 'rendue';
+            } else {
+                $statutConsigne = 'rendue';
+            }
+        } elseif (!empty($item['montant_consigne']) && (float) $item['montant_consigne'] > 0) {
+            $qteConsigne = max(1, (int) ($item['quantite_consigne'] ?? $qteVendue));
+            $montantConsigne = round((float) $item['montant_consigne'], 2);
+            $statutConsigne = $item['statut_consigne'] ?? 'en_cours';
+        }
+
+        $rawPeremption = !empty($item['date_peremption'])
+            ? $item['date_peremption']
+            : ($stock?->date_peremption ?: $produit?->date_peremption);
+
+        return [
+            'numero_lot' => !empty($item['numero_lot'])
+                ? trim((string) $item['numero_lot'])
+                : ($stock?->numero_lot ?: $produit?->numero_lot),
+            'date_peremption' => $rawPeremption
+                ? \Carbon\Carbon::parse($rawPeremption)->format('Y-m-d')
+                : null,
+            'numeros_serie' => $imeis,
+            'garantie_mois' => isset($item['garantie_mois'])
+                ? max(0, (int) $item['garantie_mois'])
+                : (int) ($produit?->duree_garantie_mois ?? 0),
+            'quantite_consigne' => $qteConsigne,
+            'montant_consigne' => $montantConsigne,
+            'statut_consigne' => $statutConsigne,
+        ];
     }
 }

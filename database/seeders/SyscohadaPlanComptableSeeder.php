@@ -68,6 +68,7 @@ class SyscohadaPlanComptableSeeder extends Seeder
             // Classe 5 : Trésorerie
             ['numero' => '521', 'libelle' => 'Banque (Compte courant principal)', 'classe' => 5, 'type' => 'actif', 'sens_normal' => 'debit'],
             ['numero' => '531', 'libelle' => 'Chèques et effets à encaisser', 'classe' => 5, 'type' => 'actif', 'sens_normal' => 'debit'],
+            ['numero' => '558', 'libelle' => 'Instruments de monnaie électronique (Orange Money, Wave, Moov)', 'classe' => 5, 'type' => 'actif', 'sens_normal' => 'debit'],
             ['numero' => '571', 'libelle' => 'Caisse principale boutique', 'classe' => 5, 'type' => 'actif', 'sens_normal' => 'debit'],
             ['numero' => '572', 'libelle' => 'Caisse secondaire / Menue caisse', 'classe' => 5, 'type' => 'actif', 'sens_normal' => 'debit'],
             ['numero' => '581', 'libelle' => 'Virements internes de fonds', 'classe' => 5, 'type' => 'actif', 'sens_normal' => 'debit'],

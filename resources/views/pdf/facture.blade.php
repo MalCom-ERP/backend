@@ -92,11 +92,45 @@
             <td style="width: 48%; padding-left: 15px;">
                 <div class="info-card">
                     <div class="info-card-title">MODALITÉS DE RÈGLEMENT</div>
+                    @php
+                        $modeBrut = strtolower((string)($vente->moyen_paiement ?: ($vente->type_paiement ?: 'especes')));
+                        $modeLibelle = match(true) {
+                            $modeBrut === 'mixte' => 'PAIEMENT MIXTE (FRACTIONNÉ)',
+                            str_contains($modeBrut, 'orange') => 'ORANGE MONEY',
+                            str_contains($modeBrut, 'wave') => 'WAVE',
+                            str_contains($modeBrut, 'moov') => 'MOOV MONEY',
+                            str_contains($modeBrut, 'carte') => 'CARTE / VIREMENT',
+                            $vente->type_paiement === 'credit' => 'À CRÉDIT',
+                            default => 'ESPÈCES (COMPTANT)',
+                        };
+                        $dpPdf = is_array($vente->details_paiement) ? $vente->details_paiement : null;
+                    @endphp
                     <table style="width: 100%; border: none; font-size: 7.5pt; margin-top: 4px;">
                         <tr>
                             <td style="color: #64748b; padding: 1.5px 0;">Mode de paiement :</td>
-                            <td style="text-align: right; font-weight: 700; color: #0f172a;">{{ strtoupper($vente->type_paiement ?? 'COMPTANT') }}</td>
+                            <td style="text-align: right; font-weight: 700; color: #0f172a;">{{ $modeLibelle }}</td>
                         </tr>
+                        @if(!empty($vente->reference_paiement))
+                            <tr>
+                                <td style="color: #64748b; padding: 1.5px 0;">Référence transaction :</td>
+                                <td style="text-align: right; font-weight: 700; color: #4338ca;">{{ $vente->reference_paiement }}</td>
+                            </tr>
+                        @endif
+                        @if($dpPdf && $modeBrut === 'mixte')
+                            <tr>
+                                <td colspan="2" style="padding: 3px 0 1.5px 0; color: #334155; font-size: 6.5pt;">
+                                    <strong>Détail :</strong>
+                                    @php $parts = []; @endphp
+                                    @if(($dpPdf['especes'] ?? 0) > 0) @php $parts[] = 'Espèces: ' . number_format($dpPdf['especes'], 0, ',', ' ') . ' F'; @endphp @endif
+                                    @if(($dpPdf['orange_money'] ?? 0) > 0) @php $parts[] = 'OM: ' . number_format($dpPdf['orange_money'], 0, ',', ' ') . ' F'; @endphp @endif
+                                    @if(($dpPdf['wave'] ?? 0) > 0) @php $parts[] = 'Wave: ' . number_format($dpPdf['wave'], 0, ',', ' ') . ' F'; @endphp @endif
+                                    @if(($dpPdf['moov_money'] ?? 0) > 0) @php $parts[] = 'Moov: ' . number_format($dpPdf['moov_money'], 0, ',', ' ') . ' F'; @endphp @endif
+                                    @if(($dpPdf['carte'] ?? 0) > 0) @php $parts[] = 'Carte: ' . number_format($dpPdf['carte'], 0, ',', ' ') . ' F'; @endphp @endif
+                                    @if(($dpPdf['credit'] ?? 0) > 0) @php $parts[] = 'Crédit: ' . number_format($dpPdf['credit'], 0, ',', ' ') . ' F'; @endphp @endif
+                                    {{ implode(' · ', $parts) }}
+                                </td>
+                            </tr>
+                        @endif
                         <tr>
                             <td style="color: #64748b; padding: 1.5px 0;">Opérateur / Caisse :</td>
                             <td style="text-align: right; font-weight: 600; color: #0f172a;">{{ $vente->user->name ?? 'Admin' }}</td>
@@ -140,9 +174,61 @@
                                 Catégorie : {{ $detail->produit->categorie->nom }}
                             </div>
                         @endif
+                        @php
+                            $rawImeis = $detail->numeros_serie ?? [];
+                            if (is_string($rawImeis)) {
+                                $decodedImeis = json_decode($rawImeis, true);
+                                $rawImeis = is_array($decodedImeis) ? $decodedImeis : [];
+                            }
+                            $imeisList = array_values(array_filter(is_array($rawImeis) ? $rawImeis : []));
+                        @endphp
+                        @if(!empty($detail->numero_lot) || !empty($detail->date_peremption))
+                            <div style="font-size: 6.5pt; color: #475569; margin-top: 1px;">
+                                @if(!empty($detail->numero_lot))
+                                    Lot : <strong>{{ $detail->numero_lot }}</strong>
+                                @endif
+                                @if(!empty($detail->numero_lot) && !empty($detail->date_peremption))
+                                    &nbsp;|&nbsp;
+                                @endif
+                                @if(!empty($detail->date_peremption))
+                                    Exp. : <strong>{{ \Carbon\Carbon::parse($detail->date_peremption)->format('d/m/Y') }}</strong>
+                                @endif
+                            </div>
+                        @endif
+                        @if(($detail->garantie_mois ?? 0) > 0 || !empty($imeisList))
+                            <div style="font-size: 6.5pt; color: #4338ca; margin-top: 1px;">
+                                @if(($detail->garantie_mois ?? 0) > 0)
+                                    Garantie : <strong>{{ $detail->garantie_mois }} mois</strong>
+                                @endif
+                                @if(($detail->garantie_mois ?? 0) > 0 && !empty($imeisList))
+                                    &nbsp;|&nbsp;
+                                @endif
+                                @if(!empty($imeisList))
+                                    IMEI / N° Série : <strong>{{ implode(', ', $imeisList) }}</strong>
+                                @endif
+                            </div>
+                        @endif
+                        @if(($detail->montant_consigne ?? 0) > 0)
+                            <div style="font-size: 6.5pt; color: #0369a1; margin-top: 1px;">
+                                Consigne ({{ $detail->quantite_consigne }} {{ $detail->produit->type_emballage ?? 'emb.' }}) :
+                                <strong>+ {{ number_format($detail->montant_consigne, 0, ',', ' ') }} {{ $boutique->devise ?? 'FCFA' }}</strong>
+                            </div>
+                        @endif
                     </td>
                     <td style="text-align: center; font-weight: 700; color: #0f172a;">
-                        {{ $detail->quantite }}
+                        @php
+                            $qCond = (int)($detail->quantite_conditionnement ?? $detail->produit?->quantite_conditionnement ?? 1);
+                            $uCond = $detail->produit?->unite_conditionnement;
+                            $uBase = $detail->unite_vente ?: ($detail->produit?->unite_base ?? '');
+                            $nbColis = ($qCond > 1 && !empty($uCond) && $detail->quantite >= $qCond) ? intdiv((int)$detail->quantite, $qCond) : 0;
+                            $resteU = ($nbColis > 0) ? ((int)$detail->quantite % $qCond) : 0;
+                        @endphp
+                        <div>{{ $detail->quantite }}@if(!empty($uBase) && $uBase !== 'Unité') <span style="font-size: 6.5pt; color: #64748b; font-weight: 600;">{{ $uBase }}</span>@endif</div>
+                        @if($nbColis > 0)
+                            <div style="font-size: 6pt; color: #4f46e5; font-weight: 600;">
+                                ({{ $nbColis }} {{ $uCond }}@if($resteU > 0) + {{ $resteU }} {{ $uBase ?: 'u' }}@endif)
+                            </div>
+                        @endif
                     </td>
                     <td style="text-align: right; color: #475569;">
                         {{ number_format($detail->prix_unitaire, 0, ',', ' ') }}
@@ -157,7 +243,8 @@
 
     <!-- Summary & Totals Block (INCLUDING ADVANCE & BALANCE IF CREDIT) -->
     @php
-        $subTotal = $vente->montant_total + ($vente->remise ?? 0);
+        $consigneTotal = (float) ($vente->montant_consigne_total ?? 0);
+        $subTotal = ($vente->montant_total - $consigneTotal) + ($vente->remise ?? 0);
         $totalPaid = $vente->montant_total - ($vente->montant_restant ?? 0);
         $isCredit = ($vente->type_paiement === 'credit');
     @endphp
@@ -182,6 +269,12 @@
                         <td class="total-label">SOUS-TOTAL BRUT</td>
                         <td class="total-amount">{{ number_format($subTotal, 0, ',', ' ') }} {{ $boutique->devise ?? 'FCFA' }}</td>
                     </tr>
+                    @if($consigneTotal > 0)
+                        <tr>
+                            <td class="total-label" style="color: #0369a1;">CONSIGNES EMBALLAGES (+)</td>
+                            <td class="total-amount" style="color: #0369a1;">+ {{ number_format($consigneTotal, 0, ',', ' ') }} {{ $boutique->devise ?? 'FCFA' }}</td>
+                        </tr>
+                    @endif
                     @if(($vente->remise ?? 0) > 0)
                         <tr>
                             <td class="total-label" style="color: #dc2626;">REMISE COMMERCIALE (-)</td>

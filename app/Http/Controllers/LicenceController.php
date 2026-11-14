@@ -20,9 +20,12 @@ class LicenceController extends Controller
             'cle_licence' => 'required|string|min:8|max:64',
         ]);
 
-        $cle = strtoupper(trim($request->cle_licence));
+        $rawCle = (string) $request->cle_licence;
+        $cle = strtoupper(preg_replace('/\s+/', '', $rawCle));
 
-        $licence = Licence::where('cle_licence', $cle)->first();
+        $licence = Licence::where('cle_licence', $cle)
+            ->orWhere('cle_licence', strtoupper(trim($rawCle)))
+            ->first();
 
         if (!$licence) {
             return response()->json([

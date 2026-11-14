@@ -35,7 +35,7 @@ class NatureSeeder extends Seeder
                 'name' => 'Quincaillerie',
                 'slug' => 'quincaillerie',
                 'description' => 'Matériaux de construction et outils',
-                'config' => ['units' => ['unité', 'paquet', 'kg', 'mètre']]
+                'config' => ['units' => ['unité', 'paquet', 'kg', 'mètre', 'tonne', 'barre', 'sac', 'rouleau']]
             ],
             [
                 'name' => 'Téléphonie & Électronique',
@@ -47,19 +47,55 @@ class NatureSeeder extends Seeder
                 'name' => 'Librairie & Papeterie',
                 'slug' => 'librairie',
                 'description' => 'Livres, fournitures scolaires et bureau',
-                'config' => ['units' => ['unité', 'r rame', 'paquet']]
+                'config' => ['units' => ['unité', 'rame', 'paquet', 'carton']]
             ],
             [
                 'name' => 'Accessoires',
                 'slug' => 'accessoire',
                 'description' => 'Bijoux, sacs et divers accessoires',
-                'config' => ['units' => ['unité', 'paire']]
+                'config' => ['units' => ['unité', 'paire', 'coffret', 'lot', 'douzaine']]
             ],
             [
                 'name' => 'Carburant & Énergie',
                 'slug' => 'carburant',
                 'description' => 'Stations-service, vente de carburant et gaz',
                 'config' => ['units' => ['litre', 'barrique', 'm3']]
+            ],
+            [
+                'name' => 'Dépôt de Boissons & Gaz',
+                'slug' => 'depot_boisson',
+                'description' => 'Distribution de boissons, casiers consignés, bouteilles de gaz et vente demi-gros/gros',
+                'config' => [
+                    'units' => ['casier', 'bouteille', 'pack', 'bouteille gaz', 'palette', 'carton'],
+                    'unit_label' => 'Casiers / Bouteilles'
+                ]
+            ],
+            [
+                'name' => 'Pièces Auto/Moto & Garage',
+                'slug' => 'pieces_auto',
+                'description' => 'Pièces détachées auto, moto, poids lourds, lubrifiants et atelier mécanique',
+                'config' => [
+                    'units' => ['pièce', 'kit', 'jeu', 'paire', 'bidon', 'litre'],
+                    'unit_label' => 'Pièces / Kits'
+                ]
+            ],
+            [
+                'name' => 'Boulangerie & Pâtisserie',
+                'slug' => 'boulangerie',
+                'description' => 'Fournil, boulangerie, viennoiserie, pâtisserie et distribution livreurs',
+                'config' => [
+                    'units' => ['pièce', 'baguette', 'plateau', 'boîte', 'part', 'kg', 'sac'],
+                    'unit_label' => 'Pièces / Fournées'
+                ]
+            ],
+            [
+                'name' => 'Ferme Avicole (Chair & Pondeuses)',
+                'slug' => 'aviculture',
+                'description' => 'Élevage et vente de poulets de chair, pondeuses, œufs en alvéoles, poussins et aliments volaille',
+                'config' => [
+                    'units' => ['sujet', 'alvéole (30)', 'carton (12 alv.)', 'kg', 'sac 50kg', 'plateau'],
+                    'unit_label' => 'Sujets / Alvéoles'
+                ]
             ],
         ];
 

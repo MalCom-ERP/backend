@@ -133,7 +133,19 @@
                         </div>
                     </td>
                     <td style="text-align: center; font-weight: 700; color: #0f172a;">
-                        {{ $detail->quantite }}
+                        @php
+                            $qCond = (int)($detail->quantite_conditionnement ?? $detail->produit?->quantite_conditionnement ?? 1);
+                            $uCond = $detail->produit?->unite_conditionnement;
+                            $uBase = $detail->unite_vente ?: ($detail->produit?->unite_base ?? '');
+                            $nbColis = ($qCond > 1 && !empty($uCond) && $detail->quantite >= $qCond) ? intdiv((int)$detail->quantite, $qCond) : 0;
+                            $resteU = ($nbColis > 0) ? ((int)$detail->quantite % $qCond) : 0;
+                        @endphp
+                        <div>{{ $detail->quantite }}@if(!empty($uBase) && $uBase !== 'Unité') <span style="font-size: 6.5pt; color: #64748b; font-weight: 600;">{{ $uBase }}</span>@endif</div>
+                        @if($nbColis > 0)
+                            <div style="font-size: 6pt; color: #4f46e5; font-weight: 600;">
+                                ({{ $nbColis }} {{ $uCond }}@if($resteU > 0) + {{ $resteU }} {{ $uBase ?: 'u' }}@endif)
+                            </div>
+                        @endif
                     </td>
                     <td style="text-align: right; color: #475569;">
                         {{ number_format($detail->prix_unitaire, 0, ',', ' ') }}

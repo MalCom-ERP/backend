@@ -24,7 +24,7 @@ class TransfertController extends Controller
             return response()->json(['message' => 'Boutique non identifiée'], 400);
         }
 
-        $query = Transfert::with(['boutiqueSource:id,nom,adresse,telephone', 'boutiqueDest:id,nom,adresse,telephone', 'auteur:id,name', 'recepteur:id,name', 'details.produit:id,nom,reference'])
+        $query = Transfert::with(['boutiqueSource:id,nom,adresse,telephone', 'boutiqueDest:id,nom,adresse,telephone', 'auteur:id,name', 'recepteur:id,name', 'details.produit:id,nom,reference,unite_base,unite_conditionnement,quantite_conditionnement'])
             ->where(function ($q) use ($boutiqueId) {
                 $q->where('boutique_source_id', $boutiqueId)
                   ->orWhere('boutique_dest_id', $boutiqueId);
@@ -66,7 +66,7 @@ class TransfertController extends Controller
             'boutiqueDest:id,nom,adresse,telephone,email',
             'auteur:id,name,email',
             'recepteur:id,name,email',
-            'details.produit:id,nom,reference,image'
+            'details.produit:id,nom,reference,image,unite_base,unite_conditionnement,quantite_conditionnement'
         ])->findOrFail($id);
 
         // Vérifier l'accès
@@ -247,13 +247,15 @@ class TransfertController extends Controller
     /**
      * Liste des autres boutiques accessibles pour transférer du stock.
      */
-    public function getAccessibleBoutiques()
+    public function getAccessibleBoutiques(Request $request)
     {
         $currentBoutiqueId = $this->getBoutiqueId();
         $user = Auth::user();
 
-        $query = Boutique::where('is_active', true)
-            ->where('id', '!=', $currentBoutiqueId);
+        $query = Boutique::where('is_active', true);
+        if (!$request->boolean('include_self') && $currentBoutiqueId) {
+            $query->where('id', '!=', $currentBoutiqueId);
+        }
 
         // Si l'utilisateur n'est pas super admin, on restreint aux boutiques de son propriétaire
         if (!in_array($user->role, ['admin', 'admin1'])) {
@@ -263,7 +265,7 @@ class TransfertController extends Controller
             }
         }
 
-        $boutiques = $query->select('id', 'nom', 'adresse', 'telephone')->get();
+        $boutiques = $query->select('id', 'nom', 'adresse', 'telephone', 'type_etablissement')->get();
 
         return response()->json($boutiques, 200);
     }
@@ -287,12 +289,14 @@ class TransfertController extends Controller
         $totalValeurAchat = 0;
         $totalValeurVente = 0;
         $articlesEnRupture = 0;
-        $articlesStockFaible = 0; // Moins de 5 unités
+        $articlesStockFaible = 0;
 
         $categoriesBreakdown = [];
+        $alertesProduits = [];
 
         foreach ($stocks as $s) {
             $qte = (int)$s->quantite;
+            $seuil = (int)($s->seuil_alerte ?? 5);
             $prixAchat = (float)($s->prix_achat ?: 0);
             $prixVente = (float)($s->prix_vente ?: 0);
 
@@ -300,14 +304,35 @@ class TransfertController extends Controller
             $totalValeurAchat += ($qte * $prixAchat);
             $totalValeurVente += ($qte * $prixVente);
 
+            $catNom = $s->produit?->categorie?->nom ?: 'Non catégorisé';
+
             if ($qte <= 0) {
                 $articlesEnRupture++;
-            } elseif ($qte <= 5) {
+                $alertesProduits[] = [
+                    'id' => $s->produit_id,
+                    'nom' => $s->produit?->nom ?? ('Produit #' . $s->produit_id),
+                    'reference' => $s->produit?->reference,
+                    'categorie' => $catNom,
+                    'quantite' => $qte,
+                    'seuil_alerte' => $seuil,
+                    'emplacement' => $s->emplacement,
+                    'statut' => 'rupture',
+                ];
+            } elseif ($qte <= $seuil) {
                 $articlesStockFaible++;
+                $alertesProduits[] = [
+                    'id' => $s->produit_id,
+                    'nom' => $s->produit?->nom ?? ('Produit #' . $s->produit_id),
+                    'reference' => $s->produit?->reference,
+                    'categorie' => $catNom,
+                    'quantite' => $qte,
+                    'seuil_alerte' => $seuil,
+                    'emplacement' => $s->emplacement,
+                    'statut' => 'faible',
+                ];
             }
 
             // Répartition par catégorie
-            $catNom = $s->produit?->categorie?->nom ?: 'Non catégorisé';
             if (!isset($categoriesBreakdown[$catNom])) {
                 $categoriesBreakdown[$catNom] = [
                     'nom' => $catNom,
@@ -335,6 +360,7 @@ class TransfertController extends Controller
             'taux_marge_moyen' => $tauxMargeMoyen,
             'articles_en_rupture' => $articlesEnRupture,
             'articles_stock_faible' => $articlesStockFaible,
+            'alertes_produits' => $alertesProduits,
             'categories' => array_values($categoriesBreakdown)
         ], 200);
     }
@@ -353,7 +379,9 @@ class TransfertController extends Controller
             'produit_id' => 'required|exists:produits,id',
             'quantite_physique' => 'required|integer|min:0',
             'motif' => 'required|string|max:100',
-            'note' => 'nullable|string|max:500'
+            'note' => 'nullable|string|max:500',
+            'seuil_alerte' => 'nullable|integer|min:0',
+            'emplacement' => 'nullable|string|max:120'
         ]);
 
         $produitId = (int)$request->produit_id;
@@ -375,18 +403,36 @@ class TransfertController extends Controller
                     'produit_id' => $produitId,
                     'boutique_id' => $boutiqueId,
                     'quantite' => 0,
+                    'seuil_alerte' => $request->filled('seuil_alerte') ? (int)$request->seuil_alerte : 5,
+                    'emplacement' => $request->input('emplacement'),
                     'prix_achat' => $produit->prix_master ?: 0,
                     'prix_vente' => $produit->prix_detail ?: 0
                 ]);
+            } else {
+                $metaDirty = false;
+                if ($request->filled('seuil_alerte')) {
+                    $stock->seuil_alerte = (int)$request->seuil_alerte;
+                    $metaDirty = true;
+                }
+                if ($request->has('emplacement')) {
+                    $stock->emplacement = $request->emplacement;
+                    $metaDirty = true;
+                }
+                if ($metaDirty) {
+                    $stock->save();
+                }
             }
 
             $qteTheorique = (int)$stock->quantite;
             $ecart = $qtePhysique - $qteTheorique;
 
             if ($ecart === 0) {
+                DB::commit();
                 return response()->json([
-                    'message' => 'Aucun écart constaté entre le stock théorique et physique.',
-                    'nouveau_stock' => $qteTheorique
+                    'message' => 'Paramètres de stock enregistrés (aucun écart de quantité).',
+                    'nouveau_stock' => $qteTheorique,
+                    'seuil_alerte' => (int)($stock->seuil_alerte ?? 5),
+                    'emplacement' => $stock->emplacement,
                 ], 200);
             }
 

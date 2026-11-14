@@ -74,6 +74,10 @@ Route::post('/loginAdmin', [SuperAdminController::class, 'login'])->name('admin.
 Route::post('/logoutAdmin', [SuperAdminController::class, 'logout'])->name('logout');
 
 // });
+// Fallback public pour servir les fichiers de stockage si le lien symbolique web n'est pas résolu
+Route::get('/storage/{folder}/{filename}', [\App\Http\Controllers\ProduitController::class, 'serveMedia'])
+    ->where('filename', '.*');
+
 /*
 |--------------------------------------------------------------------------
 | Catch-all route pour Angular (frontend)

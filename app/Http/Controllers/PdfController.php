@@ -17,7 +17,7 @@ class PdfController extends Controller
     public function generatePdf(Request $request)
     {
         $request->validate([
-            'type' => 'required|in:facture,bordereau,proforma,recu_credit,inventaire,rapport_journalier,journal,grand_livre,balance,compte_resultat,bilan',
+            'type' => 'required|in:facture,bordereau,bon_enlevement,bon_commande_achat,proforma,recu_credit,inventaire,rapport_journalier,journal,grand_livre,balance,compte_resultat,bilan',
             'id' => 'nullable|integer',
             'boutique_id' => 'nullable|integer',
             'start_date' => 'nullable|date',
@@ -33,11 +33,14 @@ class PdfController extends Controller
         try {
             // Load data based on type
             $data = $this->loadData($type, $id);
+            $this->prepareBoutiqueForPdf($data);
             
             // Select template
             $template = match($type) {
                 'facture' => 'pdf.facture',
                 'bordereau' => 'pdf.bordereau',
+                'bon_enlevement' => 'pdf.bon_enlevement',
+                'bon_commande_achat' => 'pdf.bon_commande_achat',
                 'proforma' => 'pdf.proforma',
                 'recu_credit' => 'pdf.recu_credit',
                 'inventaire' => 'pdf.inventaire',
@@ -82,10 +85,13 @@ class PdfController extends Controller
     {
         try {
             $data = $this->loadData($type, $id);
+            $this->prepareBoutiqueForPdf($data);
             
             $template = match($type) {
                 'facture' => 'pdf.facture',
                 'bordereau' => 'pdf.bordereau',
+                'bon_enlevement' => 'pdf.bon_enlevement',
+                'bon_commande_achat' => 'pdf.bon_commande_achat',
                 'proforma' => 'pdf.proforma',
                 'recu_credit' => 'pdf.recu_credit',
                 'inventaire' => 'pdf.inventaire',
@@ -103,7 +109,12 @@ class PdfController extends Controller
             };
             
             $pdf = PDF::loadView($template, $data)
-                ->setPaper('a4', $orientation);
+                ->setPaper('a4', $orientation)
+                ->setOptions([
+                    'isHtml5ParserEnabled' => true,
+                    'isRemoteEnabled' => true,
+                    'defaultFont' => 'sans-serif',
+                ]);
 
             return $pdf->stream();
         } catch (\Exception $e) {
@@ -117,6 +128,18 @@ class PdfController extends Controller
     /**
      * Load data based on document type
      */
+    /**
+     * Prépare le logo de la boutique au format Base64 Data URI pour DomPDF.
+     */
+    private function prepareBoutiqueForPdf(array &$data): void
+    {
+        if (isset($data['boutique']) && $data['boutique'] instanceof Boutique) {
+            $boutique = clone $data['boutique'];
+            $boutique->logo = $boutique->getLogoForPdf();
+            $data['boutique'] = $boutique;
+        }
+    }
+
     private function loadData($type, $id)
     {
         $user = Auth::user();
@@ -173,6 +196,40 @@ class PdfController extends Controller
                     'strategy' => $strategy,
                     'type' => $type,
                     'date' => now()
+                ];
+
+            case 'bon_enlevement':
+                $bon = \App\Models\BonEnlevement::with([
+                    'vente',
+                    'boutiqueEmettrice',
+                    'entrepot',
+                    'client',
+                    'user',
+                    'validePar',
+                    'details.produit',
+                ])->findOrFail($id);
+                $boutique = $bon->boutiqueEmettrice ?: $activeBoutique;
+                return [
+                    'bon' => $bon,
+                    'boutique' => $boutique,
+                    'type' => $type,
+                    'date' => now(),
+                ];
+
+            case 'bon_commande_achat':
+                $achat = \App\Models\CommandeAchat::with([
+                    'fournisseur',
+                    'boutique',
+                    'user',
+                    'details.produit',
+                    'paiements',
+                ])->findOrFail($id);
+                $boutique = $achat->boutique ?: $activeBoutique;
+                return [
+                    'achat' => $achat,
+                    'boutique' => $boutique,
+                    'type' => $type,
+                    'date' => now(),
                 ];
 
             case 'proforma':

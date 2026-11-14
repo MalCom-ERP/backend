@@ -51,7 +51,8 @@ class BoutiqueController extends Controller
                 'revenue' => $revenue,
                 'sales_count' => $salesCount,
                 'users_count' => $usersCount,
-                'is_active' => $b->is_active
+                'is_active' => $b->is_active,
+                'type_etablissement' => $b->type_etablissement ?? 'boutique'
             ];
         }
 
@@ -102,10 +103,19 @@ class BoutiqueController extends Controller
             if ($boutiques->isEmpty()) {
                 $boutiques = Boutique::with('nature')->get();
             }
+            $boutiques->transform(function ($b) {
+                $b->logo = $b->getEffectiveLogo();
+                return $b;
+            });
             return response()->json($boutiques, 200);
         }
 
-        return response()->json(Boutique::with('nature')->where('id', $user->boutique_id)->get(), 200);
+        $boutiques = Boutique::with('nature')->where('id', $user->boutique_id)->get();
+        $boutiques->transform(function ($b) {
+            $b->logo = $b->getEffectiveLogo();
+            return $b;
+        });
+        return response()->json($boutiques, 200);
     }
 
     /**
@@ -132,7 +142,10 @@ class BoutiqueController extends Controller
                 'devise' => 'nullable|string',
                 'format_facture' => 'nullable|string',
                 'nature_id' => 'required|exists:natures,id',
+                'type_etablissement' => 'nullable|in:boutique,entrepot,hybride',
             ]);
+
+            $fields['type_etablissement'] = $fields['type_etablissement'] ?? 'boutique';
 
             $user = Auth::user();
             $boutiqueCount = Boutique::where('user_id', $user->id)->count();
@@ -167,6 +180,9 @@ class BoutiqueController extends Controller
             if (isset($primaryBoutique) && $primaryBoutique) {
                 $this->syncParentDataToNewFiliale($boutique, $primaryBoutique);
             }
+
+            $boutique->load('nature');
+            $boutique->logo = $boutique->getEffectiveLogo();
 
             return response()->json($boutique, 201);
         } catch (\Exception $e) {
@@ -205,6 +221,7 @@ class BoutiqueController extends Controller
                     'boutique.devise' => 'nullable|string',
                     'boutique.format_facture' => 'nullable|string',
                     'boutique.nature_id' => 'required|exists:natures,id',
+                    'boutique.type_etablissement' => 'nullable|in:boutique,entrepot,hybride',
                     
                     'manager.name' => 'required|string',
                     'manager.email' => 'required|string|email|unique:users,email',
@@ -256,6 +273,8 @@ class BoutiqueController extends Controller
                     'is_active' => true
                 ]);
 
+                $boutique->load('nature');
+
                 return response()->json([
                     'message' => 'Boutique and Manager created successfully',
                     'boutique' => $boutique,
@@ -275,7 +294,9 @@ class BoutiqueController extends Controller
      */
     public function show(string $id)
     {
-        return response()->json(Boutique::with('nature')->findOrFail($id), 200);
+        $boutique = Boutique::with('nature')->findOrFail($id);
+        $boutique->logo = $boutique->getEffectiveLogo();
+        return response()->json($boutique, 200);
     }
 
     /**
@@ -303,9 +324,16 @@ class BoutiqueController extends Controller
             'devise' => 'nullable|string',
             'format_facture' => 'nullable|string',
             'nature_id' => 'required|exists:natures,id',
+            'type_etablissement' => 'nullable|in:boutique,entrepot,hybride',
         ]);
 
+        if (empty($fields['type_etablissement'])) {
+            $fields['type_etablissement'] = $boutique->type_etablissement ?? 'boutique';
+        }
+
         $boutique->update($fields);
+        $boutique->load('nature');
+        $boutique->logo = $boutique->getEffectiveLogo();
 
         return response()->json($boutique, 200);
     }
@@ -328,6 +356,14 @@ class BoutiqueController extends Controller
     protected function syncParentDataToNewFiliale(Boutique $filiale, Boutique $parent): void
     {
         try {
+            // 0. Hériter du logo de la boutique mère si la filiale n'a pas de logo propre
+            if (empty($filiale->getRawOriginal('logo'))) {
+                $parentLogo = $parent->getRawOriginal('logo') ?: $parent->getEffectiveLogo();
+                if (!empty($parentLogo)) {
+                    $filiale->update(['logo' => $parentLogo]);
+                }
+            }
+
             // 1. Synchroniser les années actives
             $parentAnnees = \App\Models\Annee::where('boutique_id', $parent->id)->get();
             foreach ($parentAnnees as $annee) {
