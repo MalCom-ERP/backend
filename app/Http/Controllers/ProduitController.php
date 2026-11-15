@@ -1437,7 +1437,7 @@ class ProduitController extends Controller
         if ($clean === 'quantite' || $clean === 'qte' || $clean === 'stock' || str_starts_with($clean, 'stock actuel')) return 'quantite';
         if ($clean === 'seuil alerte' || $clean === 'seuil_alerte') return 'seuil_alerte';
         if ($clean === 'prix_achat' || $clean === 'pa' || str_starts_with($clean, 'prix achat')) return 'prix_achat';
-        if ($clean === 'prix_vente' || $clean === 'prix vente' || $clean === 'prix_detail' || $clean === 'prix unitaire' || $clean === 'pu' || str_starts_with($clean, 'prix detail')) return 'prix_vente';
+        if ($clean === 'prix_vente' || $clean === 'prix_detail' || $clean === 'pu' || str_starts_with($clean, 'prix vente') || str_starts_with($clean, 'prix detail') || str_starts_with($clean, 'prix unitaire')) return 'prix_vente';
         if ($clean === 'prix_demi_gros' || str_starts_with($clean, 'prix demi-gros')) return 'prix_demi_gros';
         if ($clean === 'prix_master' || $clean === 'prix_gros' || str_starts_with($clean, 'prix gros')) return 'prix_master';
         if ($clean === 'prix_conditionnement' || str_starts_with($clean, 'prix colis')) return 'prix_conditionnement';
