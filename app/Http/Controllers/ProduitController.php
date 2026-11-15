@@ -13,6 +13,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 class ProduitController extends Controller
 {
@@ -1173,6 +1174,8 @@ class ProduitController extends Controller
         $createdCount = 0;
         $restockedCount = 0;
         $createdCategoriesCount = 0;
+        $produitColumns = array_flip(Schema::getColumnListing('produits'));
+        $stockColumns = array_flip(Schema::getColumnListing('stocks'));
 
         DB::beginTransaction();
         try {
@@ -1282,7 +1285,7 @@ class ProduitController extends Controller
                     $effectivePrixAchat = $prixAchat > 0 ? $prixAchat : (float) $existingStock->prix_achat;
                     $effectivePrixVente = $prixVente > 0 ? $prixVente : (float) $existingStock->prix_vente;
 
-                    $existingStock->update([
+                    $existingStock->update(array_intersect_key([
                         'quantite' => (float) $existingStock->quantite + (float) $quantite,
                         'prix_achat' => $effectivePrixAchat,
                         'prix_vente' => $effectivePrixVente,
@@ -1292,15 +1295,15 @@ class ProduitController extends Controller
                         'emplacement' => !empty($data['emplacement']) ? $data['emplacement'] : $existingStock->emplacement,
                         'date_reapprovisionnement' => now()->format('Y-m-d'),
                         'description' => 'Réapprovisionnement via importation CSV (+' . $quantite . ')',
-                    ]);
+                    ], $stockColumns));
 
                     if ($existingProduit) {
-                        $existingProduit->update([
+                        $existingProduit->update(array_intersect_key([
                             'prix_detail' => $effectivePrixVente,
                             'prix_demi_gros' => $prixDemiGros !== null ? $prixDemiGros : $existingProduit->prix_demi_gros,
                             'prix_master' => $prixMaster !== null ? $prixMaster : $existingProduit->prix_master,
                             'prix_conditionnement' => $prixColis !== null ? $prixColis : $existingProduit->prix_conditionnement,
-                        ]);
+                        ], $produitColumns));
                     }
 
                     Inventaire::create([
@@ -1320,7 +1323,7 @@ class ProduitController extends Controller
                     continue;
                 }
 
-                $produit = Produit::create([
+                $produit = Produit::create(array_intersect_key([
                     'nom' => $nom,
                     'reference' => $reference,
                     'categorie_id' => $categorieId,
@@ -1333,9 +1336,9 @@ class ProduitController extends Controller
                     'prix_detail' => $prixVente,
                     'prix_demi_gros' => $prixDemiGros,
                     'prix_master' => $prixMaster,
-                ]);
+                ], $produitColumns));
 
-                $createdStock = Stock::create([
+                $createdStock = Stock::create(array_intersect_key([
                     'produit_id' => $produit->id,
                     'boutique_id' => $boutique_id,
                     'quantite' => $quantite,
@@ -1346,7 +1349,7 @@ class ProduitController extends Controller
                     'prix_demi_gros' => $prixDemiGros,
                     'prix_gros' => $prixMaster,
                     'date_reapprovisionnement' => now()->format('Y-m-d')
-                ]);
+                ], $stockColumns));
 
                 $createdStock->setRelation('produit', $produit);
                 if ($normRef !== '' && !str_starts_with($normRef, '#prod-') && !isset($stockByReference[$normRef])) {
