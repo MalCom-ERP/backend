@@ -1079,20 +1079,40 @@ class ProduitController extends Controller
         ]);
 
         $file = $request->file('file');
-        $handle = fopen($file->getRealPath(), 'r');
-        if ($handle === false) {
-            return response()->json(['message' => "Impossible d'ouvrir le fichier CSV."], 400);
+        $rawContent = file_get_contents($file->getRealPath());
+        if ($rawContent === false || trim($rawContent) === '') {
+            return response()->json(['message' => "Le fichier CSV est vide ou illisible."], 422);
         }
 
-        // Read headers and remove BOM if present
+        // Handle UTF-16LE / UTF-16BE / Windows-1252 / UTF-8 BOM from Windows/Excel
+        if (str_starts_with($rawContent, "\xFF\xFE")) {
+            $rawContent = mb_convert_encoding(substr($rawContent, 2), 'UTF-8', 'UTF-16LE');
+        } elseif (str_starts_with($rawContent, "\xFE\xFF")) {
+            $rawContent = mb_convert_encoding(substr($rawContent, 2), 'UTF-8', 'UTF-16BE');
+        } else {
+            $rawContent = str_replace("\xEF\xBB\xBF", '', $rawContent);
+            if (!mb_check_encoding($rawContent, 'UTF-8')) {
+                $rawContent = mb_convert_encoding($rawContent, 'UTF-8', 'Windows-1252');
+            }
+        }
+
+        $handle = fopen('php://temp', 'r+');
+        fwrite($handle, $rawContent);
+        rewind($handle);
+
         $headersString = fgets($handle);
         if ($headersString === false) {
             fclose($handle);
             return response()->json(['message' => "Le fichier CSV est vide."], 422);
         }
-        $headersString = str_replace("\xEF\xBB\xBF", '', $headersString);
 
-        $delimiter = substr_count($headersString, ';') >= substr_count($headersString, ',') ? ';' : ',';
+        $counts = [
+            ';' => substr_count($headersString, ';'),
+            ',' => substr_count($headersString, ','),
+            "\t" => substr_count($headersString, "\t"),
+        ];
+        arsort($counts);
+        $delimiter = (reset($counts) > 0) ? (string) key($counts) : ';';
         $rawHeaders = str_getcsv(trim($headersString), $delimiter);
         $canonicalHeaders = array_map(fn($h) => $this->mapImportCsvHeader($h), $rawHeaders);
 
@@ -1408,16 +1428,16 @@ class ProduitController extends Controller
         $clean = str_replace(['é', 'è', 'ê', 'ë', 'à', 'â', 'ä', 'î', 'ï', 'ô', 'ö', 'ù', 'û', 'ü', 'ç'], ['e', 'e', 'e', 'e', 'a', 'a', 'a', 'i', 'i', 'o', 'o', 'u', 'u', 'u', 'c'], $clean);
         $clean = preg_replace('/\s+/u', ' ', $clean);
 
-        if ($clean === 'nom' || $clean === 'designation') return 'nom';
+        if ($clean === 'nom' || $clean === 'designation' || $clean === 'article' || $clean === 'produit' || $clean === 'libelle') return 'nom';
         if ($clean === 'reference' || $clean === 'ref') return 'reference';
-        if ($clean === 'categorie' || $clean === 'category') return 'categorie';
+        if ($clean === 'categorie' || $clean === 'category' || $clean === 'famille' || $clean === 'rayon') return 'categorie';
         if ($clean === 'emplacement') return 'emplacement';
         if ($clean === 'unite base' || $clean === 'unite_base') return 'unite_base';
         if ($clean === 'conditionnement') return 'conditionnement';
-        if ($clean === 'quantite' || str_starts_with($clean, 'stock actuel')) return 'quantite';
+        if ($clean === 'quantite' || $clean === 'qte' || $clean === 'stock' || str_starts_with($clean, 'stock actuel')) return 'quantite';
         if ($clean === 'seuil alerte' || $clean === 'seuil_alerte') return 'seuil_alerte';
-        if ($clean === 'prix_achat' || str_starts_with($clean, 'prix achat')) return 'prix_achat';
-        if ($clean === 'prix_vente' || $clean === 'prix_detail' || str_starts_with($clean, 'prix detail')) return 'prix_vente';
+        if ($clean === 'prix_achat' || $clean === 'pa' || str_starts_with($clean, 'prix achat')) return 'prix_achat';
+        if ($clean === 'prix_vente' || $clean === 'prix vente' || $clean === 'prix_detail' || $clean === 'prix unitaire' || $clean === 'pu' || str_starts_with($clean, 'prix detail')) return 'prix_vente';
         if ($clean === 'prix_demi_gros' || str_starts_with($clean, 'prix demi-gros')) return 'prix_demi_gros';
         if ($clean === 'prix_master' || $clean === 'prix_gros' || str_starts_with($clean, 'prix gros')) return 'prix_master';
         if ($clean === 'prix_conditionnement' || str_starts_with($clean, 'prix colis')) return 'prix_conditionnement';
