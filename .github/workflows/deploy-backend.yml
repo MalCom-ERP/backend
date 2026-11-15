@@ -56,8 +56,10 @@ jobs:
               php artisan key:generate --force
             fi
 
-            echo "🗄️ Exécution des migrations de base de données..."
+            echo "🗄️ Exécution des migrations et seeders idempotents..."
             php artisan migrate --force
+            php artisan db:seed --class=NatureSeeder --force
+            php artisan db:seed --class=SyscohadaPlanComptableSeeder --force
 
             echo "🔗 Création du lien symbolique storage..."
             php artisan storage:link || true
