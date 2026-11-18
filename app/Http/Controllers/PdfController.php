@@ -17,11 +17,13 @@ class PdfController extends Controller
     public function generatePdf(Request $request)
     {
         $request->validate([
-            'type' => 'required|in:facture,bordereau,bon_enlevement,bon_commande_achat,proforma,recu_credit,inventaire,rapport_journalier,journal,grand_livre,balance,compte_resultat,bilan',
+            'type' => 'required|in:facture,bordereau,bon_enlevement,bon_commande_achat,proforma,recu_credit,inventaire,rapport_journalier,rapport_hebdomadaire,journal,grand_livre,balance,compte_resultat,bilan',
             'id' => 'nullable|integer',
             'boutique_id' => 'nullable|integer',
             'start_date' => 'nullable|date',
             'end_date' => 'nullable|date',
+            'week' => 'nullable|string|max:12',
+            'date' => 'nullable|date',
             'produit_id' => 'nullable|integer',
             'journal_id' => 'nullable|integer',
             'compte_id' => 'nullable|integer'
@@ -45,6 +47,7 @@ class PdfController extends Controller
                 'recu_credit' => 'pdf.recu_credit',
                 'inventaire' => 'pdf.inventaire',
                 'rapport_journalier' => 'pdf.rapport_journalier',
+                'rapport_hebdomadaire' => 'pdf.rapport_hebdomadaire',
                 'journal' => 'pdf.compta.journal',
                 'grand_livre' => 'pdf.compta.grand_livre',
                 'balance' => 'pdf.compta.balance',
@@ -96,6 +99,7 @@ class PdfController extends Controller
                 'recu_credit' => 'pdf.recu_credit',
                 'inventaire' => 'pdf.inventaire',
                 'rapport_journalier' => 'pdf.rapport_journalier',
+                'rapport_hebdomadaire' => 'pdf.rapport_hebdomadaire',
                 'journal' => 'pdf.compta.journal',
                 'grand_livre' => 'pdf.compta.grand_livre',
                 'balance' => 'pdf.compta.balance',
@@ -320,6 +324,13 @@ class PdfController extends Controller
                 
                 $date = request('date') ? \Carbon\Carbon::parse(request('date'))->format('Y-m-d') : now()->format('Y-m-d');
                 $data = $controller->loadReportData($activeBoutique->id, $date);
+                $data['boutique'] = $activeBoutique;
+                return $data;
+
+            case 'rapport_hebdomadaire':
+                $controller = app(DailyReportController::class);
+                [$startDate, $endDate] = $controller->resolveWeekBounds(request());
+                $data = $controller->loadWeeklyReportData($activeBoutique->id, $startDate, $endDate);
                 $data['boutique'] = $activeBoutique;
                 return $data;
 

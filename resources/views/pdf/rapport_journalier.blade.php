@@ -95,14 +95,14 @@
                     <tr>
                         <td style="text-align: center; font-size: 7.5pt; color: #475569;">#{{ $v->id }}</td>
                         <td>
-                            <strong style="color: #0f172a;">{{ $v->client->nom == 'ANONYME' ? 'Client de passage' : $v->client->nom }}</strong>
+                            <strong style="color: #0f172a;">{{ (!$v->client || $v->client->nom === 'ANONYME') ? 'Client de passage' : $v->client->nom }}</strong>
                         </td>
                         <td style="text-align: center;">
                             <span class="badge badge-success">COMPTANT</span>
                         </td>
                         <td style="font-size: 7pt; color: #334155;">
                             @foreach ($v->detailVentes as $dv)
-                                <div>• {{ $dv->produit->nom ?? 'Article' }} (x{{ $dv->quantite }})</div>
+                                <div>• {{ $dv->produit?->nom ?? 'Article' }} (x{{ $dv->quantite }})</div>
                             @endforeach
                         </td>
                         <td style="text-align: center; font-weight: bold; color: #0f172a;">{{ $v->detailVentes->sum('quantite') }}</td>
@@ -121,14 +121,14 @@
                     <tr>
                         <td style="text-align: center; font-size: 7.5pt; color: #475569;">#{{ $vc->id }}</td>
                         <td>
-                            <strong style="color: #0f172a;">{{ $vc->client->nom == 'ANONYME' ? 'Client de passage' : $vc->client->nom }}</strong>
+                            <strong style="color: #0f172a;">{{ (!$vc->client || $vc->client->nom === 'ANONYME') ? 'Client de passage' : $vc->client->nom }}</strong>
                         </td>
                         <td style="text-align: center;">
                             <span class="badge badge-warning">CRÉDIT</span>
                         </td>
                         <td style="font-size: 7pt; color: #334155;">
                             @foreach ($vc->detailVentes as $dvc)
-                                <div>• {{ $dvc->produit->nom ?? 'Article' }} (x{{ $dvc->quantite }})</div>
+                                <div>• {{ $dvc->produit?->nom ?? 'Article' }} (x{{ $dvc->quantite }})</div>
                             @endforeach
                         </td>
                         <td style="text-align: center; font-weight: bold; color: #0f172a;">{{ $vc->detailVentes->sum('quantite') }}</td>
@@ -320,7 +320,7 @@
                         <tr style="background-color: #f8fafc; font-weight: bold;">
                             <td style="color: #0f172a;">CLÔTURÉ PAR :</td>
                             <td style="text-align: right; font-weight: bold; color: #475569;">
-                                {{ $report->cloturePar->name ?? (Auth::user()->name ?? 'Caissier') }}
+                                {{ (isset($report) && $report && $report->relationLoaded('cloturePar') && $report->cloturePar) ? $report->cloturePar->name : (Auth::user()?->name ?? 'Caissier') }}
                             </td>
                         </tr>
                     </tbody>
