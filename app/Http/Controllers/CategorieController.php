@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Categorie;
+use App\Services\BoutiqueCacheService;
 use Illuminate\Http\Request;
 
 class CategorieController extends Controller
@@ -13,9 +14,19 @@ class CategorieController extends Controller
     public function index()
     {
         $boutique_id = $this->getBoutiqueId();
-        $categories = Categorie::where('boutique_id', $boutique_id)
-            ->orWhereNull('boutique_id') // Allow global categories if any
-            ->orderByDesc('id')->get();
+        $categories = BoutiqueCacheService::remember(
+            $boutique_id,
+            'categories',
+            'index',
+            120,
+            function () use ($boutique_id) {
+                return Categorie::where('boutique_id', $boutique_id)
+                    ->orWhereNull('boutique_id')
+                    ->orderByDesc('id')
+                    ->get()
+                    ->toArray();
+            }
+        );
         return response()->json(data: $categories);
     }
 
@@ -38,6 +49,7 @@ class CategorieController extends Controller
         $categorie->description = $request->description;
         $categorie->boutique_id = $this->getBoutiqueId();
         $categorie->save();
+        BoutiqueCacheService::bump($categorie->boutique_id, ['categories', 'produits', 'dashboard']);
         return response()->json([
             'message' => 'Categorie creee avec succes',
             'id' => $categorie->id,
@@ -76,9 +88,7 @@ class CategorieController extends Controller
         ['id' => $categorie];
         $cat = Categorie::where('id', $categorie)->first();
         $cat->update($request->all());
-        // $categorie->nom = $request->nom;
-        // $categorie->description = $request->description;
-        // $categorie->save();
+        BoutiqueCacheService::bump($cat?->boutique_id, ['categories', 'produits', 'dashboard']);
         return response()->json(['message' => 'Categorie modifiee avec succes'], 200);
     }
 
@@ -87,8 +97,9 @@ class CategorieController extends Controller
      */
     public function destroy(Categorie $categorie)
     {
-        // On supprime la categorie qui a ete trouvee
+        $boutiqueId = $categorie->boutique_id;
         $categorie->delete();
+        BoutiqueCacheService::bump($boutiqueId, ['categories', 'produits', 'dashboard']);
         return response()->json(['message' => 'Categorie supprimee avec succes'], 200);
     }
 }

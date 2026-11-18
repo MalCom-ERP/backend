@@ -27,6 +27,11 @@ Route::get('/licences/statut/{boutique_id?}', [LicenceController::class, 'statut
 // Médias publics (images produits, logos boutiques) accessibles sans header Authorization
 Route::get('/media/{folder}/{filename}', [ProduitController::class, 'serveMedia'])->where('filename', '.*');
 
+// Vérification et téléchargement des mises à jour Desktop depuis le dossier serveur
+Route::get('/app-updates/check', [App\Http\Controllers\AppUpdateController::class, 'check']);
+Route::get('/app-updates/download/{filename}', [App\Http\Controllers\AppUpdateController::class, 'download'])
+    ->where('filename', '[A-Za-z0-9._-]+');
+
 // User and Boutique Status Check Routes (must be authenticated)
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/user/check-status', [UserStatusController::class, 'checkUserStatus']);
@@ -176,6 +181,8 @@ Route::middleware(['auth:sanctum', 'check.user.active', 'check.boutique.active']
 
         Route::prefix('rapports')->group(function () {
             Route::get('/', [App\Http\Controllers\DailyReportController::class, 'index']);
+            Route::get('/hebdomadaire/apercu', [App\Http\Controllers\DailyReportController::class, 'weeklySummary']);
+            Route::get('/hebdomadaire/download', [App\Http\Controllers\DailyReportController::class, 'downloadWeekly']);
             Route::get('/session-status', [App\Http\Controllers\DailyReportController::class, 'sessionStatus']);
             Route::post('/cloturer', [App\Http\Controllers\DailyReportController::class, 'cloturerCaisse']);
             Route::post('/generer', [App\Http\Controllers\DailyReportController::class, 'generate']);

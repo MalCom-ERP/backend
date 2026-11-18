@@ -8,6 +8,7 @@ use App\Models\Produit;
 use App\Models\Stock;
 use App\Models\Transfert;
 use App\Models\TransfertDetail;
+use App\Services\BoutiqueCacheService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -232,6 +233,8 @@ class TransfertController extends Controller
             $transfert->save();
 
             DB::commit();
+            BoutiqueCacheService::bump($sourceBoutiqueId, ['produits', 'dashboard']);
+            BoutiqueCacheService::bump($destBoutiqueId, ['produits', 'dashboard']);
 
             return response()->json([
                 'message' => 'Transfert inter-boutiques effectué avec succès !',
@@ -280,89 +283,98 @@ class TransfertController extends Controller
             return response()->json(['message' => 'Boutique non identifiée'], 400);
         }
 
-        $stocks = Stock::with(['produit.categorie'])
-            ->where('boutique_id', $boutiqueId)
-            ->get();
+        $payload = BoutiqueCacheService::remember(
+            $boutiqueId,
+            'produits',
+            'stock_valuation',
+            30,
+            function () use ($boutiqueId) {
+                $stocks = Stock::with(['produit.categorie'])
+                    ->where('boutique_id', $boutiqueId)
+                    ->get();
 
-        $totalArticlesDistincts = $stocks->count();
-        $totalQuantitePhysique = 0;
-        $totalValeurAchat = 0;
-        $totalValeurVente = 0;
-        $articlesEnRupture = 0;
-        $articlesStockFaible = 0;
+                $totalArticlesDistincts = $stocks->count();
+                $totalQuantitePhysique = 0;
+                $totalValeurAchat = 0;
+                $totalValeurVente = 0;
+                $articlesEnRupture = 0;
+                $articlesStockFaible = 0;
 
-        $categoriesBreakdown = [];
-        $alertesProduits = [];
+                $categoriesBreakdown = [];
+                $alertesProduits = [];
 
-        foreach ($stocks as $s) {
-            $qte = (int)$s->quantite;
-            $seuil = (int)($s->seuil_alerte ?? 5);
-            $prixAchat = (float)($s->prix_achat ?: 0);
-            $prixVente = (float)($s->prix_vente ?: 0);
+                foreach ($stocks as $s) {
+                    $qte = (int)$s->quantite;
+                    $seuil = (int)($s->seuil_alerte ?? 5);
+                    $prixAchat = (float)($s->prix_achat ?: 0);
+                    $prixVente = (float)($s->prix_vente ?: 0);
 
-            $totalQuantitePhysique += $qte;
-            $totalValeurAchat += ($qte * $prixAchat);
-            $totalValeurVente += ($qte * $prixVente);
+                    $totalQuantitePhysique += $qte;
+                    $totalValeurAchat += ($qte * $prixAchat);
+                    $totalValeurVente += ($qte * $prixVente);
 
-            $catNom = $s->produit?->categorie?->nom ?: 'Non catégorisé';
+                    $catNom = $s->produit?->categorie?->nom ?: 'Non catégorisé';
 
-            if ($qte <= 0) {
-                $articlesEnRupture++;
-                $alertesProduits[] = [
-                    'id' => $s->produit_id,
-                    'nom' => $s->produit?->nom ?? ('Produit #' . $s->produit_id),
-                    'reference' => $s->produit?->reference,
-                    'categorie' => $catNom,
-                    'quantite' => $qte,
-                    'seuil_alerte' => $seuil,
-                    'emplacement' => $s->emplacement,
-                    'statut' => 'rupture',
-                ];
-            } elseif ($qte <= $seuil) {
-                $articlesStockFaible++;
-                $alertesProduits[] = [
-                    'id' => $s->produit_id,
-                    'nom' => $s->produit?->nom ?? ('Produit #' . $s->produit_id),
-                    'reference' => $s->produit?->reference,
-                    'categorie' => $catNom,
-                    'quantite' => $qte,
-                    'seuil_alerte' => $seuil,
-                    'emplacement' => $s->emplacement,
-                    'statut' => 'faible',
+                    if ($qte <= 0) {
+                        $articlesEnRupture++;
+                        $alertesProduits[] = [
+                            'id' => $s->produit_id,
+                            'nom' => $s->produit?->nom ?? ('Produit #' . $s->produit_id),
+                            'reference' => $s->produit?->reference,
+                            'categorie' => $catNom,
+                            'quantite' => $qte,
+                            'seuil_alerte' => $seuil,
+                            'emplacement' => $s->emplacement,
+                            'statut' => 'rupture',
+                        ];
+                    } elseif ($qte <= $seuil) {
+                        $articlesStockFaible++;
+                        $alertesProduits[] = [
+                            'id' => $s->produit_id,
+                            'nom' => $s->produit?->nom ?? ('Produit #' . $s->produit_id),
+                            'reference' => $s->produit?->reference,
+                            'categorie' => $catNom,
+                            'quantite' => $qte,
+                            'seuil_alerte' => $seuil,
+                            'emplacement' => $s->emplacement,
+                            'statut' => 'faible',
+                        ];
+                    }
+
+                    if (!isset($categoriesBreakdown[$catNom])) {
+                        $categoriesBreakdown[$catNom] = [
+                            'nom' => $catNom,
+                            'articles_count' => 0,
+                            'quantite_totale' => 0,
+                            'valeur_achat' => 0,
+                            'valeur_vente' => 0
+                        ];
+                    }
+                    $categoriesBreakdown[$catNom]['articles_count']++;
+                    $categoriesBreakdown[$catNom]['quantite_totale'] += $qte;
+                    $categoriesBreakdown[$catNom]['valeur_achat'] += ($qte * $prixAchat);
+                    $categoriesBreakdown[$catNom]['valeur_vente'] += ($qte * $prixVente);
+                }
+
+                $margeBruteTotale = $totalValeurVente - $totalValeurAchat;
+                $tauxMargeMoyen = $totalValeurAchat > 0 ? round(($margeBruteTotale / $totalValeurAchat) * 100, 1) : 0;
+
+                return [
+                    'total_articles_distincts' => $totalArticlesDistincts,
+                    'total_quantite_physique' => $totalQuantitePhysique,
+                    'total_valeur_achat' => round($totalValeurAchat, 2),
+                    'total_valeur_vente' => round($totalValeurVente, 2),
+                    'marge_brute_potentielle' => round($margeBruteTotale, 2),
+                    'taux_marge_moyen' => $tauxMargeMoyen,
+                    'articles_en_rupture' => $articlesEnRupture,
+                    'articles_stock_faible' => $articlesStockFaible,
+                    'alertes_produits' => $alertesProduits,
+                    'categories' => array_values($categoriesBreakdown)
                 ];
             }
+        );
 
-            // Répartition par catégorie
-            if (!isset($categoriesBreakdown[$catNom])) {
-                $categoriesBreakdown[$catNom] = [
-                    'nom' => $catNom,
-                    'articles_count' => 0,
-                    'quantite_totale' => 0,
-                    'valeur_achat' => 0,
-                    'valeur_vente' => 0
-                ];
-            }
-            $categoriesBreakdown[$catNom]['articles_count']++;
-            $categoriesBreakdown[$catNom]['quantite_totale'] += $qte;
-            $categoriesBreakdown[$catNom]['valeur_achat'] += ($qte * $prixAchat);
-            $categoriesBreakdown[$catNom]['valeur_vente'] += ($qte * $prixVente);
-        }
-
-        $margeBruteTotale = $totalValeurVente - $totalValeurAchat;
-        $tauxMargeMoyen = $totalValeurAchat > 0 ? round(($margeBruteTotale / $totalValeurAchat) * 100, 1) : 0;
-
-        return response()->json([
-            'total_articles_distincts' => $totalArticlesDistincts,
-            'total_quantite_physique' => $totalQuantitePhysique,
-            'total_valeur_achat' => round($totalValeurAchat, 2),
-            'total_valeur_vente' => round($totalValeurVente, 2),
-            'marge_brute_potentielle' => round($margeBruteTotale, 2),
-            'taux_marge_moyen' => $tauxMargeMoyen,
-            'articles_en_rupture' => $articlesEnRupture,
-            'articles_stock_faible' => $articlesStockFaible,
-            'alertes_produits' => $alertesProduits,
-            'categories' => array_values($categoriesBreakdown)
-        ], 200);
+        return response()->json($payload, 200);
     }
 
     /**
@@ -470,6 +482,7 @@ class TransfertController extends Controller
             }
 
             DB::commit();
+            BoutiqueCacheService::bump($boutiqueId, ['produits', 'dashboard']);
 
             return response()->json([
                 'message' => 'Stock régularisé avec succès !',

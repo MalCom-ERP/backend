@@ -16,6 +16,7 @@ use App\Models\BonEnlevement;
 use App\Models\BonEnlevementDetail;
 use Illuminate\Http\Request;
 use App\Models\PaiementCredit;
+use App\Services\BoutiqueCacheService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 
@@ -296,6 +297,7 @@ class VenteController extends Controller
             }
 
             DB::commit();
+            BoutiqueCacheService::bump($boutique_id, ['ventes', 'produits', 'dashboard']);
 
             return response()->json([
                 'message' => 'Vente rectifiée avec succès et comptabilisée',
@@ -377,6 +379,7 @@ class VenteController extends Controller
         $vente->remise = 0;
         $vente->surplus = 0;
         $vente->save();
+        BoutiqueCacheService::bump($boutique_id, ['ventes', 'produits', 'dashboard']);
 
         return response()->json(['message' => 'Vente annulée avec succès'], 200);
     }
@@ -486,6 +489,7 @@ class VenteController extends Controller
             $vente->save();
 
             DB::commit();
+            BoutiqueCacheService::bump($boutique_id, ['ventes', 'produits', 'dashboard']);
             return response()->json(["message" => "Vente Annulée avec succès"], 200);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -1365,6 +1369,7 @@ class VenteController extends Controller
             }
 
             DB::commit();
+            BoutiqueCacheService::bump($boutique_id, ['ventes', 'produits', 'dashboard']);
             return response()->json([
                 'message' => $is_proforma ? 'Pro-forma généré' : 'Vente effectuée',
                 'venteID' => $vente->id,
@@ -1549,6 +1554,10 @@ class VenteController extends Controller
                     'error' => $e->getMessage(),
                 ];
             }
+        }
+
+        if (!empty($synced)) {
+            BoutiqueCacheService::bump($boutique_id, ['ventes', 'produits', 'dashboard']);
         }
 
         return response()->json([

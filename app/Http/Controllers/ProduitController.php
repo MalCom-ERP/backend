@@ -8,6 +8,7 @@ use App\Models\Categorie;
 use App\Models\Inventaire;
 use App\Models\inventaires;
 use App\Models\Boutique;
+use App\Services\BoutiqueCacheService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
@@ -22,16 +23,27 @@ class ProduitController extends Controller
      */
     public function index()
     {
-        // la liste des produits avec a la fois les categories et les stocks lorsque la quantite est superieur a 0:
-
         $boutique_id = $this->getBoutiqueId();
-        $produits = Produit::with(['categorie', 'stock' => function ($query) use ($boutique_id) {
-            $query->where('boutique_id', $boutique_id);
-        }])
-            ->whereHas('stock', function ($query) use ($boutique_id) {
-                $query->where('boutique_id', $boutique_id);
-            })
-            ->orderBy('id', 'desc')->get();
+        $hostHash = md5((string) request()->getSchemeAndHttpHost());
+
+        $produits = BoutiqueCacheService::remember(
+            $boutique_id,
+            'produits',
+            "index_{$hostHash}",
+            60,
+            function () use ($boutique_id) {
+                return Produit::with(['categorie', 'stock' => function ($query) use ($boutique_id) {
+                    $query->where('boutique_id', $boutique_id);
+                }])
+                    ->whereHas('stock', function ($query) use ($boutique_id) {
+                        $query->where('boutique_id', $boutique_id);
+                    })
+                    ->orderBy('id', 'desc')
+                    ->get()
+                    ->toArray();
+            }
+        );
+
         return response()->json($produits, 200);
     }
 
@@ -302,6 +314,8 @@ class ProduitController extends Controller
             // SYSCOHADA : Enregistrement comptable standard du réapprovisionnement (Achats de marchandises)
             app(\App\Services\ComptaService::class)->enregistrerReappro($reapproProcessed, $boutique_id, $user->id);
         }
+
+        BoutiqueCacheService::bump($boutique_id, ['produits', 'dashboard']);
 
         return response()->json(['message' => 'Produit reapprovisionné avec succès'], 201);
     }
@@ -915,6 +929,8 @@ class ProduitController extends Controller
             $query->where('boutique_id', $boutique_id);
         }]);
 
+        BoutiqueCacheService::bump($boutique_id, ['produits', 'dashboard']);
+
         return response()->json($produit, 201);
     }
 
@@ -1069,6 +1085,8 @@ class ProduitController extends Controller
                 ]);
             }
         }
+
+        BoutiqueCacheService::bump($boutique_id, ['produits', 'dashboard']);
 
         return response()->json(['message' => 'Produit modifié avec succès', 'produit' => $produit], 200);
     }
@@ -1384,6 +1402,7 @@ class ProduitController extends Controller
             }
 
             DB::commit();
+            BoutiqueCacheService::bump($boutique_id, ['produits', 'categories', 'dashboard']);
 
             $parts = [];
             if ($createdCount > 0) $parts[] = "$createdCount créé(s)";
@@ -1462,33 +1481,44 @@ class ProduitController extends Controller
     public function summary()
     {
         $boutique_id = $this->getBoutiqueId();
+        $todayStr = Carbon::today()->format('Y-m-d');
 
-        $produit_count = Stock::where('boutique_id', $boutique_id)
-            ->whereHas('produit')
-            ->where('quantite', '>', 0)
-            ->count();
-        $total_stock = Stock::where('boutique_id', $boutique_id)
-            ->whereHas('produit')
-            ->selectRaw('SUM(quantite * prix_vente) as total')
-            ->first()->total ?? 0;
+        $payload = BoutiqueCacheService::remember(
+            $boutique_id,
+            'dashboard',
+            "summary_{$todayStr}",
+            30,
+            function () use ($boutique_id, $todayStr) {
+                $produit_count = Stock::where('boutique_id', $boutique_id)
+                    ->whereHas('produit')
+                    ->where('quantite', '>', 0)
+                    ->count();
+                $total_stock = Stock::where('boutique_id', $boutique_id)
+                    ->whereHas('produit')
+                    ->selectRaw('SUM(quantite * prix_vente) as total')
+                    ->first()->total ?? 0;
 
-        $ventes_jour = DB::table('ventes')
-            ->where('boutique_id', $boutique_id)
-            ->whereIn('statut', ['validee', 'payee', 'credit'])
-            ->whereRaw("date_vente = ?", [Carbon::today()->format('Y-m-d')])
-            ->count();
+                $ventes_jour = DB::table('ventes')
+                    ->where('boutique_id', $boutique_id)
+                    ->whereIn('statut', ['validee', 'payee', 'credit'])
+                    ->whereRaw("date_vente = ?", [$todayStr])
+                    ->count();
 
-        $categorie_count = \App\Models\Categorie::where('boutique_id', $boutique_id)
-            ->orWhereNull('boutique_id')
-            ->count();
+                $categorie_count = \App\Models\Categorie::where('boutique_id', $boutique_id)
+                    ->orWhereNull('boutique_id')
+                    ->count();
 
-        return response()->json([
-            'produit_count' => $produit_count,
-            'total_stock' => (float)$total_stock,
-            'ventes_jour' => $ventes_jour,
-            'categorie_count' => $categorie_count,
-            'annee_active' => now()->year
-        ], 200);
+                return [
+                    'produit_count' => $produit_count,
+                    'total_stock' => (float)$total_stock,
+                    'ventes_jour' => $ventes_jour,
+                    'categorie_count' => $categorie_count,
+                    'annee_active' => now()->year
+                ];
+            }
+        );
+
+        return response()->json($payload, 200);
     }
 
     /**
@@ -1512,8 +1542,7 @@ class ProduitController extends Controller
 
         //Pour la suppression d'un produit (Soft Delete enabled):
         $produit->delete();
-
-        // \Log::info("Product {$produit->id} soft deleted by user " . auth()->id() . " for boutique {$boutique_id}");
+        BoutiqueCacheService::bump($boutique_id, ['produits', 'dashboard']);
 
         return response()->json(['message' => 'Produit déplacé vers la corbeille'], 200);
     }
@@ -1571,6 +1600,8 @@ class ProduitController extends Controller
         }
 
         // Log::info("Product {$id} restored by user " . auth()->id() . " for boutique {$boutique_id}");
+
+        BoutiqueCacheService::bump($boutique_id, ['produits', 'dashboard']);
 
         return response()->json(['message' => 'Produit restauré avec succès'], 200);
     }
