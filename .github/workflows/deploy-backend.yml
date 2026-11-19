@@ -7,22 +7,16 @@ on:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
 
     steps:
       - name: Checkout Backend
         uses: actions/checkout@v4
 
-      - name: Setup SSH
+      - name: Sync Code & Finalize Deployment locally on VPS
         run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
-
-      - name: Sync Code to VPS via Rsync
-        run: |
-          ssh -T ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "mkdir -p /var/www/malcom/backend"
+          set -e
+          mkdir -p /var/www/malcom/backend
           rsync -avz --delete \
             --no-owner --no-group \
             --exclude='.git' \
@@ -33,49 +27,47 @@ jobs:
             --exclude='storage' \
             --exclude='public/storage' \
             --exclude='database/*.sqlite' \
-            ./ ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/var/www/malcom/backend/
+            ./ /var/www/malcom/backend/
 
-      - name: Finalize Backend Deployment on VPS
-        run: |
-          ssh -T ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} << 'EOF'
-            set -e
+          echo "🚀 Démarrage de la configuration Backend sur admin.malcom-lgc.com..."
+          cd /var/www/malcom/backend
 
-            echo "🚀 Démarrage de la configuration Backend sur admin.malcom-lgc.com..."
-            cd /var/www/malcom/backend
+          mkdir -p storage/app/public storage/framework/cache/data storage/framework/sessions storage/framework/views storage/logs bootstrap/cache
 
-            mkdir -p storage/app/public storage/framework/cache/data storage/framework/sessions storage/framework/views storage/logs bootstrap/cache
+          if [ ! -f .env ] && [ -f /var/www/malcom/.env.production.template ]; then
+            cp /var/www/malcom/.env.production.template .env
+          fi
 
-            if [ ! -f .env ] && [ -f /var/www/malcom/.env.production.template ]; then
-              cp /var/www/malcom/.env.production.template .env
-            fi
+          echo "🔐 Ajustement des permissions avant les commandes Artisan..."
+          sudo chown -R $USER:www-data storage bootstrap/cache
+          sudo chmod -R 775 storage bootstrap/cache
 
-            echo "📦 Installation des dépendances Composer..."
-            composer install --no-dev --optimize-autoloader --no-interaction
+          echo "📦 Installation des dépendances Composer..."
+          composer install --no-dev --optimize-autoloader --no-interaction
 
-            if ! grep -q "^APP_KEY=base64:" .env; then
-              php artisan key:generate --force
-            fi
+          if ! grep -q "^APP_KEY=base64:" .env; then
+            php artisan key:generate --force
+          fi
 
-            echo "🗄️ Exécution des migrations et seeders idempotents..."
-            php artisan migrate --force
-            php artisan db:seed --class=NatureSeeder --force
-            php artisan db:seed --class=SyscohadaPlanComptableSeeder --force
+          echo "🗄️ Exécution des migrations et seeders idempotents..."
+          php artisan migrate --force
+          php artisan db:seed --class=NatureSeeder --force
+          php artisan db:seed --class=SyscohadaPlanComptableSeeder --force
 
-            echo "🔗 Création du lien symbolique storage..."
-            php artisan storage:link || true
+          echo "🔗 Création du lien symbolique storage..."
+          php artisan storage:link || true
 
-            echo "🧹 Optimisation et mise en cache Laravel..."
-            php artisan optimize:clear
-            php artisan config:cache
-            php artisan route:cache
-            php artisan view:cache
+          echo "🧹 Optimisation et mise en cache Laravel..."
+          php artisan optimize:clear
+          php artisan config:cache
+          php artisan route:cache
+          php artisan view:cache
 
-            echo "🔐 Ajustement des permissions..."
-            sudo chown -R $USER:www-data storage bootstrap/cache
-            sudo chmod -R 775 storage bootstrap/cache
+          echo "🔐 Réajustement des permissions pour PHP-FPM..."
+          sudo chown -R $USER:www-data storage bootstrap/cache
+          sudo chmod -R 775 storage bootstrap/cache
 
-            echo "🔄 Redémarrage de PHP-FPM..."
-            sudo systemctl reload php8.2-fpm || true
+          echo "🔄 Redémarrage de PHP-FPM..."
+          sudo systemctl reload php8.2-fpm || true
 
-            echo "✅ Déploiement Backend terminé avec succès !"
-          EOF
+          echo "✅ Déploiement Backend terminé avec succès !"

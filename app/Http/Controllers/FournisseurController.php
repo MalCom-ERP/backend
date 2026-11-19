@@ -10,6 +10,7 @@ use App\Models\Inventaire;
 use App\Models\PaiementFournisseur;
 use App\Models\Produit;
 use App\Models\Stock;
+use App\Services\BoutiqueCacheService;
 use App\Services\ComptaService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -666,5 +667,6 @@ class FournisseurController extends Controller
         }
 
         app(ComptaService::class)->enregistrerAchatFournisseur($achat);
+        BoutiqueCacheService::bump($boutiqueId, ['produits', 'dashboard']);
     }
 }
