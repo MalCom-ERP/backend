@@ -29,6 +29,10 @@ Route::get('/media/{folder}/{filename}', [ProduitController::class, 'serveMedia'
 
 // Vérification et téléchargement des mises à jour Desktop depuis le dossier serveur
 Route::get('/app-updates/check', [App\Http\Controllers\AppUpdateController::class, 'check']);
+Route::get('/app-updates/latest', [App\Http\Controllers\AppUpdateController::class, 'latest']);
+Route::get('/app-updates/latest-download/{edition}/{platform}', [App\Http\Controllers\AppUpdateController::class, 'downloadLatest'])
+    ->where('edition', '[A-Za-z0-9_-]+')
+    ->where('platform', '[A-Za-z0-9_-]+');
 Route::get('/app-updates/download/{filename}', [App\Http\Controllers\AppUpdateController::class, 'download'])
     ->where('filename', '[A-Za-z0-9._-]+');
 

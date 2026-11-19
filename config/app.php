@@ -123,4 +123,7 @@ return [
         'store' => env('APP_MAINTENANCE_STORE', 'database'),
     ],
 
+    'downloads_dir' => env('MALCOM_DOWNLOADS_DIR'),
+    'downloads_public_url' => env('MALCOM_DOWNLOADS_PUBLIC_URL', 'https://malcom-lgc.com/downloads'),
+
 ];
