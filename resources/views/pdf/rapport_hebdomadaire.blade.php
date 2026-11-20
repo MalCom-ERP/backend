@@ -83,12 +83,12 @@
                 </div>
             </td>
             <td style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 4px; padding: 7px 8px; width: 25%; vertical-align: top;">
-                <div style="font-size: 6pt; font-weight: bold; color: #166534; text-transform: uppercase;">MARGE BRUTE SUR VENTES</div>
+                <div style="font-size: 6pt; font-weight: bold; color: #166534; text-transform: uppercase;">TOTAL ENCAISSÉ RÉEL</div>
                 <div style="font-size: 11pt; font-weight: 900; color: #15803d; margin-top: 2px;">
-                    {{ number_format($totaux['marge_brute'] ?? 0, 0, ',', ' ') }} <span style="font-size: 6.5pt; font-weight: normal;">{{ $devise }}</span>
+                    {{ number_format($totaux['total_encaisse_reel'] ?? 0, 0, ',', ' ') }} <span style="font-size: 6.5pt; font-weight: normal;">{{ $devise }}</span>
                 </div>
                 <div style="font-size: 6.5pt; color: #166534; margin-top: 3px; font-weight: bold;">
-                    Taux : {{ $totaux['taux_marge_pct'] ?? 0 }}% • Coût PA : {{ number_format($totaux['cout_achat_estime'] ?? 0, 0, ',', ' ') }} F
+                    Recouvrements : {{ number_format($totaux['total_recouvrements'] ?? 0, 0, ',', ' ') }} F
                 </div>
             </td>
             <td style="background-color: #fff1f2; border: 1px solid #fecdd3; border-radius: 4px; padding: 7px 8px; width: 25%; vertical-align: top;">
@@ -101,12 +101,12 @@
                 </div>
             </td>
             <td style="background-color: #eff6ff; border: 1px solid #bfdbfe; border-radius: 4px; padding: 7px 8px; width: 25%; vertical-align: top;">
-                <div style="font-size: 6pt; font-weight: bold; color: #1e40af; text-transform: uppercase;">BÉNÉFICE NET RÉEL</div>
-                <div style="font-size: 11pt; font-weight: 900; color: {{ ($totaux['resultat_net_reel'] ?? 0) >= 0 ? '#1e40af' : '#be123c' }}; margin-top: 2px;">
-                    {{ number_format($totaux['resultat_net_reel'] ?? 0, 0, ',', ' ') }} <span style="font-size: 6.5pt; font-weight: normal;">{{ $devise }}</span>
+                <div style="font-size: 6pt; font-weight: bold; color: #1e40af; text-transform: uppercase;">VENTES À CRÉDIT</div>
+                <div style="font-size: 11pt; font-weight: 900; color: #1e40af; margin-top: 2px;">
+                    {{ number_format($clients_summary['nouveaux_credits_semaine'] ?? 0, 0, ',', ' ') }} <span style="font-size: 6.5pt; font-weight: normal;">{{ $devise }}</span>
                 </div>
                 <div style="font-size: 6.5pt; color: #1e3a8a; margin-top: 3px; font-weight: bold;">
-                    Flux net (CA − Dép.) : {{ number_format($totaux['benefice_net'] ?? 0, 0, ',', ' ') }} F
+                    Encours global : {{ number_format($clients_summary['encours_credit_global'] ?? 0, 0, ',', ' ') }} F
                 </div>
             </td>
         </tr>
@@ -149,13 +149,12 @@
     <table class="table-data" style="margin-top: 2px; margin-bottom: 10px;">
         <thead>
             <tr>
-                <th style="width: 17%; text-align: left;">JOUR</th>
-                <th style="width: 10%; text-align: center;">NB VENTES</th>
-                <th style="width: 15%; text-align: right;">COMPTANT</th>
-                <th style="width: 14%; text-align: right;">CRÉDIT</th>
-                <th style="width: 15%; text-align: right;">CA TOTAL</th>
-                <th style="width: 14%; text-align: right;">DÉPENSES</th>
-                <th style="width: 15%; text-align: right;">SOLDE NET</th>
+                <th style="width: 22%; text-align: left;">JOUR</th>
+                <th style="width: 12%; text-align: center;">NB VENTES</th>
+                <th style="width: 17%; text-align: right;">COMPTANT</th>
+                <th style="width: 16%; text-align: right;">CRÉDIT</th>
+                <th style="width: 17%; text-align: right;">CA TOTAL</th>
+                <th style="width: 16%; text-align: right;">DÉPENSES</th>
             </tr>
         </thead>
         <tbody>
@@ -172,9 +171,6 @@
                     <td style="text-align: right; font-family: monospace; color: #b45309;">{{ number_format($day['ca_credit'], 0, ',', ' ') }}</td>
                     <td style="text-align: right; font-weight: bold; font-family: monospace; color: #0f172a;">{{ number_format($day['ca_total'], 0, ',', ' ') }}</td>
                     <td style="text-align: right; font-family: monospace; color: #be123c;">{{ number_format($day['depenses'], 0, ',', ' ') }}</td>
-                    <td style="text-align: right; font-weight: bold; font-family: monospace; color: {{ $day['solde_net'] >= 0 ? '#047857' : '#be123c' }};">
-                        {{ number_format($day['solde_net'], 0, ',', ' ') }}
-                    </td>
                 </tr>
             @endforeach
         </tbody>
@@ -184,11 +180,8 @@
                 <td style="text-align: center; font-weight: 900; padding: 6px 8px;">{{ $stats['nombre_ventes'] ?? 0 }}</td>
                 <td style="text-align: right; font-weight: bold; padding: 6px 8px;">{{ number_format($totaux['ventes_cash_net'] ?? 0, 0, ',', ' ') }}</td>
                 <td style="text-align: right; font-weight: bold; color: #b45309; padding: 6px 8px;">{{ number_format($totaux['ventes_credit_net'] ?? 0, 0, ',', ' ') }}</td>
-                <td style="text-align: right; font-weight: 900; color: #0f172a; padding: 6px 8px;">{{ number_format($totaux['ventes_net'] ?? 0, 0, ',', ' ') }}</td>
-                <td style="text-align: right; font-weight: 900; color: #be123c; padding: 6px 8px;">{{ number_format($totaux['depenses'] ?? 0, 0, ',', ' ') }}</td>
-                <td style="text-align: right; font-weight: 900; color: {{ ($totaux['benefice_net'] ?? 0) >= 0 ? '#047857' : '#be123c' }}; padding: 6px 8px;">
-                    {{ number_format($totaux['benefice_net'] ?? 0, 0, ',', ' ') }} {{ $devise }}
-                </td>
+                <td style="text-align: right; font-weight: 900; color: #0f172a; padding: 6px 8px;">{{ number_format($totaux['ventes_net'] ?? 0, 0, ',', ' ') }} {{ $devise }}</td>
+                <td style="text-align: right; font-weight: 900; color: #be123c; padding: 6px 8px;">{{ number_format($totaux['depenses'] ?? 0, 0, ',', ' ') }} {{ $devise }}</td>
             </tr>
         </tfoot>
     </table>
@@ -363,10 +356,6 @@
                         <tr>
                             <td>Valeur Stock au Prix de Vente</td>
                             <td style="text-align: right; font-weight: bold; font-family: monospace; color: #0f172a;">{{ number_format($stock_health['valeur_stock_vente'] ?? 0, 0, ',', ' ') }} F</td>
-                        </tr>
-                        <tr style="background-color: #f0fdf4;">
-                            <td style="font-weight: bold; color: #166534;">Marge Latente en Stock</td>
-                            <td style="text-align: right; font-weight: 900; color: #15803d; font-family: monospace;">{{ number_format($stock_health['marge_latente_stock'] ?? 0, 0, ',', ' ') }} F</td>
                         </tr>
                     </tbody>
                 </table>

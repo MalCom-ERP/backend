@@ -308,7 +308,6 @@ class DailyReportController extends Controller
         $whatsappMsg .= "📊 *Performance Journalière :*\n";
         $whatsappMsg .= "• Chiffre d'Affaires Net : {$caStr}\n";
         $whatsappMsg .= "• Charges Totales : {$depTotStr}\n";
-        $whatsappMsg .= "• *Bénéfice Net : {$netStr}*\n";
         $whatsappMsg .= "• Transactions : {$data['stats']['nombre_ventes']} vente(s)\n";
 
         $cleanTel = $boutique->telephone ? preg_replace('/[^0-9]/', '', $boutique->telephone) : null;
@@ -1242,8 +1241,7 @@ class DailyReportController extends Controller
         $message = "📊 *Rapport Journalier - {$boutiqueName}*\n";
         $message .= "📅 Date: {$date}\n\n";
         $message .= "💰 Ventes Net: {$ventes} CFA\n";
-        $message .= "📉 Dépenses: " . number_format($report->total_depenses, 0, '.', ' ') . " CFA\n";
-        $message .= "✨ Bénéfice Net: *{$benefice} CFA*\n\n";
+        $message .= "📉 Dépenses: " . number_format($report->total_depenses, 0, '.', ' ') . " CFA\n\n";
         $message .= "📝 Lien du rapport: " . url("/api/rapports/{$report->id}/download");
 
         foreach ($admins as $admin) {

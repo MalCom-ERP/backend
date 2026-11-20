@@ -59,9 +59,9 @@
                 </div>
             </td>
             <td style="background-color: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 4px; padding: 6px 8px; width: 25%;">
-                <div style="font-size: 6pt; font-weight: bold; color: #065f46; text-transform: uppercase;">SOLDE NET OPÉRATIONNEL</div>
+                <div style="font-size: 6pt; font-weight: bold; color: #065f46; text-transform: uppercase;">TOTAL ENCAISSÉ RÉEL</div>
                 <div style="font-size: 11pt; font-weight: 900; color: #047857; margin-top: 2px;">
-                    {{ number_format($totaux['benefice_net'], 0, ',', ' ') }} <span style="font-size: 6.5pt; font-weight: normal;">{{ $boutique->devise ?? 'FCFA' }}</span>
+                    {{ number_format($totaux['total_encaisse_reel'] ?? 0, 0, ',', ' ') }} <span style="font-size: 6.5pt; font-weight: normal;">{{ $boutique->devise ?? 'FCFA' }}</span>
                 </div>
             </td>
             <td style="background-color: #eff6ff; border: 1px solid #bfdbfe; border-radius: 4px; padding: 6px 8px; width: 25%;">
