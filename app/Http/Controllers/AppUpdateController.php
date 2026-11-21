@@ -110,7 +110,7 @@ class AppUpdateController extends Controller
             $platformsPayload = [];
             $editionLatestVersion = null;
 
-            foreach (['windows', 'macos-arm64', 'macos-intel'] as $platform) {
+            foreach (['windows', 'macos-arm64', 'macos-intel', 'android'] as $platform) {
                 $best = $dir ? $this->findBestRelease($allReleases, $edition, $platform) : null;
                 $payload = $this->formatReleasePayload($best, $edition, $platform);
                 $platformsPayload[$platform] = $payload;
@@ -187,7 +187,7 @@ class AppUpdateController extends Controller
     public function download(string $filename)
     {
         $safeName = basename($filename);
-        if (!preg_match('/^[A-Za-z0-9._-]+\.(exe|msi|dmg|zip|AppImage|deb)$/i', $safeName)) {
+        if (!preg_match('/^[A-Za-z0-9._-]+\.(exe|msi|dmg|zip|AppImage|deb|apk)$/i', $safeName)) {
             return response()->json(['message' => 'Nom de fichier invalide'], 400);
         }
 
@@ -242,6 +242,7 @@ class AppUpdateController extends Controller
             'macos-arm64', 'arm64', 'apple-silicon', 'applesilicon', 'darwin-arm64', 'mac-arm64' => 'macos-arm64',
             'macos-intel', 'intel', 'x64', 'x86_64', 'darwin-x64', 'mac-intel' => 'macos-intel',
             'macos', 'darwin', 'mac' => 'macos',
+            'android', 'apk', 'tablet', 'tablette' => 'android',
             default => null,
         };
     }
@@ -351,8 +352,8 @@ class AppUpdateController extends Controller
 
     private function parseInstallerFilename(string $filename): ?array
     {
-        // Format standard : MalCom-Pro-4.4.0-Windows-Setup.exe / MalCom-Cloud-4.5.0-macOS-AppleSilicon.dmg
-        if (preg_match('/^MalCom-(Pro|Cloud)-v?(\d+\.\d+\.\d+(?:-[A-Za-z0-9.]+)?)-(Windows-Setup\.exe|Windows-x64\.msi|macOS-AppleSilicon\.dmg|macOS-Intel\.dmg)$/i', $filename, $m)) {
+        // Format standard : MalCom-Pro-4.4.0-Windows-Setup.exe / MalCom-Cloud-4.5.0-macOS-AppleSilicon.dmg / MalCom-Cloud-4.5.0-Android.apk
+        if (preg_match('/^MalCom-(Pro|Cloud)-v?(\d+\.\d+\.\d+(?:-[A-Za-z0-9.]+)?)-(Windows-Setup\.exe|Windows-x64\.msi|macOS-AppleSilicon\.dmg|macOS-Intel\.dmg|Android\.apk)$/i', $filename, $m)) {
             $edition = strtolower($m[1]);
             $version = $m[2];
             $suffix = strtolower($m[3]);
@@ -361,21 +362,25 @@ class AppUpdateController extends Controller
                 str_contains($suffix, 'windows-x64.msi') => 'windows-msi',
                 str_contains($suffix, 'applesilicon') => 'macos-arm64',
                 str_contains($suffix, 'intel') => 'macos-intel',
+                str_contains($suffix, 'android.apk') => 'android',
                 default => 'unknown',
             };
-            $priority = in_array($platform, ['windows-exe', 'macos-arm64', 'macos-intel'], true) ? 1 : 2;
+            $priority = in_array($platform, ['windows-exe', 'macos-arm64', 'macos-intel', 'android'], true) ? 1 : 2;
             return compact('edition', 'version', 'platform', 'priority');
         }
 
-        // Format générique tolérant (ex: MalCom_Cloud_4.5.0_x64.exe ou MalCom-Pro-v4.5.0-arm64.dmg)
-        if (preg_match('/malcom[-_\s]*(pro|standalone|cloud).*?v?(\d+\.\d+\.\d+(?:-[A-Za-z0-9.]+)?).*\.(exe|msi|dmg)$/i', $filename, $m)) {
+        // Format générique tolérant (ex: MalCom_Cloud_4.5.0_x64.exe ou MalCom-Pro-v4.5.0-arm64.dmg ou MalCom-Cloud-4.5.0.apk)
+        if (preg_match('/malcom[-_\s]*(pro|standalone|cloud).*?v?(\d+\.\d+\.\d+(?:-[A-Za-z0-9.]+)?).*\.(exe|msi|dmg|apk)$/i', $filename, $m)) {
             $rawEd = strtolower($m[1]);
             $edition = in_array($rawEd, ['pro', 'standalone'], true) ? 'pro' : 'cloud';
             $version = $m[2];
             $ext = strtolower($m[3]);
             $lower = strtolower($filename);
 
-            if ($ext === 'exe') {
+            if ($ext === 'apk') {
+                $platform = 'android';
+                $priority = 2;
+            } elseif ($ext === 'exe') {
                 $platform = 'windows-exe';
                 $priority = 2;
             } elseif ($ext === 'msi') {
@@ -411,6 +416,9 @@ class AppUpdateController extends Controller
         }
         if ($requestedPlatform === 'macos') {
             return str_starts_with($filePlatform, 'macos');
+        }
+        if ($requestedPlatform === 'android') {
+            return $filePlatform === 'android';
         }
         return false;
     }
