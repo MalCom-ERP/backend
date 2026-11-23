@@ -49,24 +49,19 @@ class GlobalSearchController extends Controller
                 'total_count' => 0
             ];
 
+            if (!$boutiqueId) {
+                return response()->json($results, 200);
+            }
+
             // ── 1. Search Produits ───────────────────────────────────────────
             if ($mode === 'all' || $mode === 'produits') {
                 $prodLimit = ($mode === 'produits') ? 20 : 6;
-                $currentBoutique = $boutiqueId ? \App\Models\Boutique::find($boutiqueId) : null;
-                $groupBoutiques = $currentBoutique ? $currentBoutique->getGroupBoutiques()->where('id', '!=', $boutiqueId) : collect();
 
                 $prodBuilder = Produit::with(['categorie', 'stock' => function ($q) use ($boutiqueId) {
-                    if ($boutiqueId) {
-                        $q->where('boutique_id', $boutiqueId);
-                    }
-                }]);
-
-                $groupBoutiqueIds = $currentBoutique ? $currentBoutique->getGroupBoutiqueIds() : ($boutiqueId ? [$boutiqueId] : []);
-                if (!empty($groupBoutiqueIds)) {
-                    $prodBuilder->whereHas('stocks', function ($q) use ($groupBoutiqueIds) {
-                        $q->whereIn('boutique_id', $groupBoutiqueIds);
-                    });
-                }
+                    $q->where('boutique_id', $boutiqueId);
+                }])->whereHas('stocks', function ($q) use ($boutiqueId) {
+                    $q->where('boutique_id', $boutiqueId);
+                });
 
                 if (!empty($query)) {
                     $prodBuilder->where(function ($q) use ($query) {
@@ -81,9 +76,12 @@ class GlobalSearchController extends Controller
 
                 $produits = $prodBuilder->orderBy('nom', 'asc')->limit($prodLimit)->get();
 
-                $results['produits'] = $produits->map(function ($p) use ($groupBoutiques) {
+                $results['produits'] = $produits->map(function ($p) {
                     $stockQte = $p->stock ? (float)$p->stock->quantite : 0;
                     $seuil = $p->stock ? (float)($p->stock->seuil_alerte ?? 5) : 5;
+                    $prixBoutique = ($p->stock && (float)$p->stock->prix_vente > 0)
+                        ? (float)$p->stock->prix_vente
+                        : (float)$p->prix_detail;
 
                     $status = 'disponible';
                     if ($stockQte <= 0) {
@@ -92,59 +90,19 @@ class GlobalSearchController extends Controller
                         $status = 'faible';
                     }
 
-                    // Aperçu d'orientation : si en rupture locale, chercher les autres filiales dispos avec adresse et contact
-                    $filialesApercu = [];
-                    if ($status === 'rupture' && $groupBoutiques->isNotEmpty()) {
-                        foreach ($groupBoutiques as $gb) {
-                            $otherStock = \App\Models\Stock::where('produit_id', $p->id)
-                                ->where('boutique_id', $gb->id)
-                                ->where('quantite', '>', 0)
-                                ->first();
-
-                            if (!$otherStock) {
-                                $matchingId = Produit::where('id', '!=', $p->id)
-                                    ->where(function ($q) use ($p) {
-                                        if (!empty($p->reference)) {
-                                            $q->where('reference', $p->reference);
-                                        }
-                                        $q->orWhereRaw('LOWER(TRIM(nom)) = ?', [strtolower(trim($p->nom))]);
-                                    })
-                                    ->pluck('id');
-
-                                if ($matchingId->isNotEmpty()) {
-                                    $otherStock = \App\Models\Stock::whereIn('produit_id', $matchingId)
-                                        ->where('boutique_id', $gb->id)
-                                        ->where('quantite', '>', 0)
-                                        ->first();
-                                }
-                            }
-
-                            if ($otherStock && $otherStock->quantite > 0) {
-                                $filialesApercu[] = [
-                                    'boutique_id' => $gb->id,
-                                    'nom' => $gb->nom,
-                                    'adresse' => $gb->adresse ?: 'Adresse non renseignée',
-                                    'telephone' => $gb->telephone ?: 'Non renseigné',
-                                    'quantite' => (float)$otherStock->quantite,
-                                    'prix_vente' => (float)($otherStock->prix_vente ?: $p->prix_detail)
-                                ];
-                            }
-                        }
-                    }
-
                     return [
                         'id' => $p->id,
                         'nom' => $p->nom,
                         'reference' => $p->reference ?: "REF-{$p->id}",
                         'categorie_nom' => $p->categorie ? $p->categorie->nom : 'Général',
-                        'prix_detail' => (float)$p->prix_detail,
+                        'prix_detail' => $prixBoutique,
                         'prix_master' => (float)$p->prix_master,
                         'stock_restant' => $stockQte,
                         'stock_status' => $status,
                         'image' => $p->image ?: 'assets/img/produit/default.png',
                         'nature_slug' => $p->config['nature'] ?? 'default',
-                        'filiales_disponibles' => $filialesApercu,
-                        'total_stock_filiales' => array_sum(array_column($filialesApercu, 'quantite')),
+                        'filiales_disponibles' => [],
+                        'total_stock_filiales' => 0,
                     ];
                 });
             }
@@ -168,31 +126,20 @@ class GlobalSearchController extends Controller
                     $clientBuilder->where('nom', '<>', 'ANONYME');
                 }
 
-                if ($boutiqueId) {
-                    $clientBuilder->whereHas('ventes', function ($q) use ($boutiqueId) {
-                        $q->where('boutique_id', $boutiqueId);
-                    });
+                $clientBuilder->whereHas('ventes', function ($q) use ($boutiqueId) {
+                    $q->where('boutique_id', $boutiqueId);
+                });
 
-                    $clientBuilder->withSum(['ventes as total_dette' => function ($q) use ($boutiqueId) {
-                        $q->where('boutique_id', $boutiqueId)
-                        ->where('type_paiement', 'credit');
-                    }], 'montant_restant');
+                $clientBuilder->withSum(['ventes as total_dette' => function ($q) use ($boutiqueId) {
+                    $q->where('boutique_id', $boutiqueId)
+                    ->where('type_paiement', 'credit');
+                }], 'montant_restant');
 
-                    $clientBuilder->withCount(['ventes as count_credits' => function ($q) use ($boutiqueId) {
-                        $q->where('boutique_id', $boutiqueId)
-                        ->where('type_paiement', 'credit')
-                        ->where('montant_restant', '>', 0);
-                    }]);
-                } else {
-                    $clientBuilder->withSum(['ventes as total_dette' => function ($q) {
-                        $q->where('type_paiement', 'credit');
-                    }], 'montant_restant');
-
-                    $clientBuilder->withCount(['ventes as count_credits' => function ($q) {
-                        $q->where('type_paiement', 'credit')
-                        ->where('montant_restant', '>', 0);
-                    }]);
-                }
+                $clientBuilder->withCount(['ventes as count_credits' => function ($q) use ($boutiqueId) {
+                    $q->where('boutique_id', $boutiqueId)
+                    ->where('type_paiement', 'credit')
+                    ->where('montant_restant', '>', 0);
+                }]);
 
                 $clients = $clientBuilder->orderByDesc('total_dette')->limit($clientLimit)->get();
 
@@ -213,11 +160,8 @@ class GlobalSearchController extends Controller
             // ── 3. Search Factures / Ventes ──────────────────────────────────
             if ($mode === 'all' || $mode === 'factures') {
                 $facLimit = ($mode === 'factures') ? 20 : 6;
-                $venteBuilder = Vente::with(['client', 'boutique']);
-
-                if ($boutiqueId) {
-                    $venteBuilder->where('boutique_id', $boutiqueId);
-                }
+                $venteBuilder = Vente::with(['client', 'boutique'])
+                    ->where('boutique_id', $boutiqueId);
 
                 if (!empty($query)) {
                     // If query is numeric, search exact ID or prefix
