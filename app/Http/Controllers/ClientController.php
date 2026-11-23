@@ -275,6 +275,22 @@ class ClientController extends Controller
             }
         }
 
+        // Éviter les doublons exacts sur le nom normalisé + même téléphone (ou sans téléphone)
+        $existingSame = Client::whereRaw('UPPER(TRIM(nom)) = ?', [$nom])
+            ->when(
+                $telephone,
+                fn($q) => $q->where('telephone', $telephone),
+                fn($q) => $q->where(fn($sub) => $sub->whereNull('telephone')->orWhere('telephone', ''))
+            )
+            ->first();
+
+        if ($existingSame) {
+            return response()->json([
+                'message' => 'Client existant récupéré',
+                'client' => $existingSame
+            ], 200);
+        }
+
         $client = Client::create([
             'nom' => $nom,
             'telephone' => $telephone,

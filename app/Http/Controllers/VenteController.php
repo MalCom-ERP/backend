@@ -489,7 +489,7 @@ class VenteController extends Controller
             $vente->save();
 
             DB::commit();
-            BoutiqueCacheService::bump($boutique_id, ['ventes', 'produits', 'dashboard']);
+            BoutiqueCacheService::bump($boutique_id, ['ventes', 'produits', 'dashboard', 'clients']);
             return response()->json(["message" => "Vente Annulée avec succès"], 200);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -1104,6 +1104,74 @@ class VenteController extends Controller
         return response()->json($ventes, 200);
     }
 
+    private function resolveOrCreateClient(array $data): int
+    {
+        $client_nom = strtoupper(trim((string) ($data['client_nom'] ?? '')));
+        $client_numero = !empty($data['client_numero']) ? trim((string) $data['client_numero']) : null;
+        $adresse = !empty($data['adresse']) ? trim((string) $data['adresse']) : null;
+
+        if (!empty($data['client_id']) && is_numeric($data['client_id']) && (int) $data['client_id'] > 0) {
+            $client = Client::find((int) $data['client_id']);
+            if ($client) {
+                if ($client_numero && empty($client->telephone)) {
+                    $phoneUsed = Client::where('telephone', $client_numero)
+                        ->where('id', '!=', $client->id)
+                        ->exists();
+                    if (!$phoneUsed) {
+                        $client->telephone = $client_numero;
+                    }
+                }
+                if ($adresse && empty($client->adresse)) {
+                    $client->adresse = $adresse;
+                }
+                if ($client->isDirty()) {
+                    $client->save();
+                }
+                return $client->id;
+            }
+        }
+
+        if ($client_nom === '' || $client_nom === 'ANONYME') {
+            return Client::whereRaw('UPPER(TRIM(nom)) = ?', ['ANONYME'])->value('id') ?? 1;
+        }
+
+        $client = null;
+        if ($client_numero) {
+            $client = Client::where('telephone', $client_numero)->first();
+        }
+        if (!$client) {
+            $client = Client::whereRaw('UPPER(TRIM(nom)) = ?', [$client_nom])->first();
+        }
+
+        if ($client) {
+            if ($client_numero && empty($client->telephone)) {
+                $phoneUsed = Client::where('telephone', $client_numero)
+                    ->where('id', '!=', $client->id)
+                    ->exists();
+                if (!$phoneUsed) {
+                    $client->telephone = $client_numero;
+                }
+            }
+            if ($adresse && empty($client->adresse)) {
+                $client->adresse = $adresse;
+            }
+            if ($client->isDirty()) {
+                $client->save();
+            }
+            return $client->id;
+        }
+
+        $client = Client::create([
+            'nom' => $client_nom,
+            'telephone' => $client_numero,
+            'adresse' => $adresse,
+            'plafond_credit' => 0,
+            'points_fidelite' => 0,
+        ]);
+
+        return $client->id;
+    }
+
     public function store(Request $request)
     {
         $request->validate([
@@ -1111,6 +1179,10 @@ class VenteController extends Controller
             'montant_total' => 'required|numeric',
             'date' => 'date',
             'remise' => 'nullable|numeric',
+            'client_id' => 'nullable|integer|exists:clients,id',
+            'client_nom' => 'nullable|string|max:191',
+            'client_numero' => 'nullable|string|max:50',
+            'adresse' => 'nullable|string|max:191',
             'generer_bon_enlevement' => 'nullable|boolean',
             'entrepot_enlevement_id' => 'nullable|integer|exists:boutiques,id',
             'recepteur_nom' => 'nullable|string|max:150',
@@ -1124,27 +1196,6 @@ class VenteController extends Controller
             return response()->json(['message' => 'Boutique non identifiée.'], 400);
         }
 
-        $client_id = 1;
-        if ($request->client_nom) {
-            $client_nom = strtoupper(trim($request->client_nom));
-            $client_numero = !empty($request->client_numero) ? trim($request->client_numero) : null;
-
-            $client = null;
-            if ($client_numero) {
-                $client = Client::where('telephone', $client_numero)->first();
-            }
-            if (!$client) {
-                $client = Client::where('nom', $client_nom)->where('telephone', $client_numero)->first();
-            }
-            if (!$client) {
-                $client = Client::create([
-                    'nom' => $client_nom,
-                    'telephone' => $client_numero
-                ]);
-            }
-            $client_id = $client->id;
-        }
-
         $is_proforma = $request->input('is_proforma', false);
         $genererBon = !$is_proforma && $request->boolean('generer_bon_enlevement', false);
         $entrepotEnlevementId = ($genererBon && $request->filled('entrepot_enlevement_id'))
@@ -1154,6 +1205,8 @@ class VenteController extends Controller
 
         DB::beginTransaction();
         try {
+            $client_id = $this->resolveOrCreateClient($request->all());
+
             $vente = new Vente();
             $vente->client_id = $client_id;
             $vente->boutique_id = $boutique_id;
@@ -1369,7 +1422,7 @@ class VenteController extends Controller
             }
 
             DB::commit();
-            BoutiqueCacheService::bump($boutique_id, ['ventes', 'produits', 'dashboard']);
+            BoutiqueCacheService::bump($boutique_id, ['ventes', 'produits', 'dashboard', 'clients']);
             return response()->json([
                 'message' => $is_proforma ? 'Pro-forma généré' : 'Vente effectuée',
                 'venteID' => $vente->id,
@@ -1412,25 +1465,7 @@ class VenteController extends Controller
                 // Traiter chaque vente dans une transaction individuelle
                 DB::beginTransaction();
 
-                $client_id = 1;
-                if (!empty($vData['client_nom'])) {
-                    $cNom = strtoupper(trim($vData['client_nom']));
-                    $cNum = !empty($vData['client_numero']) ? trim($vData['client_numero']) : null;
-                    $client = null;
-                    if ($cNum) {
-                        $client = Client::where('telephone', $cNum)->first();
-                    }
-                    if (!$client) {
-                        $client = Client::where('nom', $cNom)->first();
-                    }
-                    if (!$client) {
-                        $client = Client::create([
-                            'nom' => $cNom,
-                            'telephone' => $cNum,
-                        ]);
-                    }
-                    $client_id = $client->id;
-                }
+                $client_id = $this->resolveOrCreateClient($vData);
 
                 $vente = new Vente();
                 $vente->client_id = $client_id;
