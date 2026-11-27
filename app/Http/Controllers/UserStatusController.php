@@ -42,7 +42,7 @@ class UserStatusController extends Controller
             'boutique_id' => $user->boutique_id,
             'boutique_active' => $boutiqueActive,
             'role' => $user->role,
-            'permissions' => $user->permissions ?? [],
+            'permissions' => $user->getEffectivePermissions(),
             'boutique_limit' => $user->boutique_limit,
             'message' => 'Statut vérifié avec succès.'
         ], 200);

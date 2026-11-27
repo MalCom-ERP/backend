@@ -30,8 +30,8 @@ class CheckRole
 
         $userRole = strtolower(trim($user->role ?? ''));
 
-        // Si l'utilisateur est admin ou admin1 et que 'admin' est autorisé
-        if (in_array($userRole, ['admin', 'admin1']) && in_array('admin', $allowedRoles)) {
+        // Si l'utilisateur est admin, admin1 ou super_admin et que 'admin' est autorisé
+        if (in_array($userRole, ['admin', 'admin1', 'super_admin']) && in_array('admin', $allowedRoles)) {
             return $next($request);
         }
 

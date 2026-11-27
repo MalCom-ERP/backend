@@ -210,11 +210,25 @@ class FournisseurController extends Controller
         return response()->json(['message' => 'Fournisseur supprimé avec succès'], 200);
     }
 
+    private function canViewOrPayAchats(?\App\Models\User $user): bool
+    {
+        return $user !== null
+            && ($user->isAdminRole() || strtolower(trim((string) $user->role)) === 'comptable');
+    }
+
     /**
      * Liste des bons de commande & réceptions d'achats de la boutique active
      */
     public function achatsIndex(Request $request)
     {
+        /** @var \App\Models\User|null $user */
+        $user = Auth::user();
+        if (!$this->canViewOrPayAchats($user)) {
+            return response()->json([
+                'error' => "Accès refusé. Les achats et réceptions fournisseurs ne sont pas accessibles à votre rôle."
+            ], 403);
+        }
+
         $boutiqueId = $this->getBoutiqueId();
         if (!$boutiqueId) {
             return response()->json(['message' => 'Boutique non identifiée'], 400);
@@ -277,6 +291,14 @@ class FournisseurController extends Controller
      */
     public function achatShow(Request $request, $id)
     {
+        /** @var \App\Models\User|null $user */
+        $user = Auth::user();
+        if (!$this->canViewOrPayAchats($user)) {
+            return response()->json([
+                'error' => "Accès refusé. Les achats et réceptions fournisseurs ne sont pas accessibles à votre rôle."
+            ], 403);
+        }
+
         $boutiqueId = $this->getBoutiqueId();
         $achat = CommandeAchat::with(self::ACHAT_RELATIONS)
             ->where('boutique_id', $boutiqueId)
@@ -290,7 +312,14 @@ class FournisseurController extends Controller
      */
     public function achatStore(Request $request)
     {
+        /** @var \App\Models\User|null $user */
         $user = Auth::user();
+        if (!$user || !$user->canManageReappro()) {
+            return response()->json([
+                'error' => "Accès refusé. Les achats et réceptions de stock sont strictement réservés à l'administrateur."
+            ], 403);
+        }
+
         $boutiqueId = $this->getBoutiqueId();
         if (!$boutiqueId) {
             return response()->json(['message' => 'Boutique non identifiée'], 400);
@@ -492,7 +521,14 @@ class FournisseurController extends Controller
      */
     public function receptionner(Request $request, $id)
     {
+        /** @var \App\Models\User|null $user */
         $user = Auth::user();
+        if (!$user || !$user->canManageReappro()) {
+            return response()->json([
+                'error' => "Accès refusé. Les achats et réceptions de stock sont strictement réservés à l'administrateur."
+            ], 403);
+        }
+
         $boutiqueId = $this->getBoutiqueId();
 
         $achat = CommandeAchat::with(['details.produit', 'fournisseur', 'paiements'])
@@ -546,7 +582,14 @@ class FournisseurController extends Controller
      */
     public function enregistrerPaiement(Request $request, $id)
     {
+        /** @var \App\Models\User|null $user */
         $user = Auth::user();
+        if (!$this->canViewOrPayAchats($user)) {
+            return response()->json([
+                'error' => "Accès refusé. Le règlement des achats fournisseurs n'est pas accessible à votre rôle."
+            ], 403);
+        }
+
         $boutiqueId = $this->getBoutiqueId();
 
         $achat = CommandeAchat::with(['fournisseur'])

@@ -382,6 +382,14 @@ class TransfertController extends Controller
      */
     public function stockAdjustment(Request $request)
     {
+        /** @var \App\Models\User|null $authUser */
+        $authUser = Auth::user();
+        if (!$authUser || !$authUser->canManageReappro()) {
+            return response()->json([
+                'error' => "Accès refusé. L'ajustement manuel du stock est strictement réservé à l'administrateur."
+            ], 403);
+        }
+
         $boutiqueId = $this->getBoutiqueId();
         if (!$boutiqueId) {
             return response()->json(['message' => 'Boutique non identifiée'], 400);

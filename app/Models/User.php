@@ -53,20 +53,57 @@ class User extends Authenticatable
         ];
     }
 
+    public function isAdminRole(): bool
+    {
+        return in_array(strtolower(trim((string) $this->role)), ['admin', 'admin1', 'super_admin'], true);
+    }
+
+    public function isGestionnaireRole(): bool
+    {
+        return strtolower(trim((string) $this->role)) === 'gestionnaire';
+    }
+
+    public function canEditProducts(): bool
+    {
+        return $this->isAdminRole();
+    }
+
+    public function canManageReappro(): bool
+    {
+        return $this->isAdminRole();
+    }
+
+    public function getEffectivePermissions(): array
+    {
+        $perms = is_array($this->permissions) ? $this->permissions : [];
+
+        if ($this->isGestionnaireRole()) {
+            $perms['can_reappro'] = false;
+            $perms['can_change_prices'] = false;
+        }
+
+        return $perms;
+    }
+
     /**
      * Vérifie si l'utilisateur possède une permission spécifique (par son rôle par défaut ou par délégation).
      * Permissions supportées :
-     * - can_reappro : Réapprovisionnement de stock (Admin par défaut)
-     * - can_change_prices : Modification des prix d'achat/vente (Admin par défaut)
+     * - can_reappro : Réapprovisionnement de stock (Admin uniquement)
+     * - can_change_prices : Modification des prix d'achat/vente (Admin uniquement pour gestionnaire)
+     * - can_edit_products : Modification / suppression / import de produits (Admin uniquement)
      * - can_view_ca : Consultation du Chiffre d'Affaires (Admin & Comptable par défaut)
      * - can_view_margins : Consultation des marges et prix d'achat (Admin par défaut)
      */
     public function hasPermission(string $permission): bool
     {
-        $role = strtolower((string) $this->role);
+        $role = strtolower(trim((string) $this->role));
 
-        if ($role === 'admin' || $role === 'super_admin') {
+        if ($this->isAdminRole()) {
             return true;
+        }
+
+        if ($this->isGestionnaireRole() && in_array($permission, ['can_reappro', 'can_change_prices', 'can_edit_products'], true)) {
+            return false;
         }
 
         $perms = is_array($this->permissions) ? $this->permissions : [];

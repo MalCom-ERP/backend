@@ -57,6 +57,14 @@ class ProduitController extends Controller
 
     public function reapproIndex()
     {
+        /** @var \App\Models\User|null $user */
+        $user = Auth::user();
+        if (!$user || !$user->canManageReappro()) {
+            return response()->json([
+                'error' => "Accès refusé. Le réapprovisionnement est strictement réservé à l'administrateur de la boutique."
+            ], 403);
+        }
+
         // Pour la liste des produits a reapprovisionner:
         $boutique_id = $this->getBoutiqueId();
         $produits = Produit::with(['categorie', 'stock' => function ($query) use ($boutique_id) {
@@ -74,11 +82,11 @@ class ProduitController extends Controller
 
     public function reapproCreate(Request $request)
     {
-        /** @var \App\Models\User $user */
+        /** @var \App\Models\User|null $user */
         $user = Auth::user();
-        if (!$user || !$user->hasPermission('can_reappro')) {
+        if (!$user || !$user->canManageReappro()) {
             return response()->json([
-                'error' => "Accès refusé. Seul l'administrateur de la boutique (ou un utilisateur disposant d'une autorisation déléguée) peut effectuer un réapprovisionnement."
+                'error' => "Accès refusé. Le réapprovisionnement est strictement réservé à l'administrateur de la boutique."
             ], 403);
         }
 
@@ -936,9 +944,15 @@ class ProduitController extends Controller
 
     public function update(Request $request, Produit $produit)
     {
-        /** @var \App\Models\User $user */
+        /** @var \App\Models\User|null $user */
         $user = Auth::user();
-        $canChangePrices = $user && $user->hasPermission('can_change_prices');
+        if (!$user || !$user->canEditProducts()) {
+            return response()->json([
+                'error' => "Accès refusé. Seul l'administrateur de la boutique peut modifier un produit."
+            ], 403);
+        }
+
+        $canChangePrices = $user->hasPermission('can_change_prices');
 
         // Pour la modification d'un produit (Nom, Description, Categorie)
         $request->validate(array_merge([
@@ -1093,6 +1107,14 @@ class ProduitController extends Controller
 
     public function importCSV(Request $request)
     {
+        /** @var \App\Models\User|null $user */
+        $user = Auth::user();
+        if (!$user || !$user->canEditProducts()) {
+            return response()->json([
+                'error' => "Accès refusé. L'import CSV de produits est strictement réservé à l'administrateur de la boutique."
+            ], 403);
+        }
+
         $request->validate([
             'file' => 'required|file|mimes:csv,txt'
         ]);
@@ -1526,6 +1548,14 @@ class ProduitController extends Controller
      */
     public function destroy(Produit $produit)
     {
+        /** @var \App\Models\User|null $user */
+        $user = Auth::user();
+        if (!$user || !$user->canEditProducts()) {
+            return response()->json([
+                'error' => "Accès refusé. Seul l'administrateur de la boutique peut supprimer un produit."
+            ], 403);
+        }
+
         $boutique_id = $this->getBoutiqueId();
         if (!$boutique_id) {
             return response()->json(['error' => 'Aucune boutique sélectionnée'], 400);
@@ -1568,6 +1598,14 @@ class ProduitController extends Controller
 
     public function restore(Request $request, $id)
     {
+        /** @var \App\Models\User|null $user */
+        $user = Auth::user();
+        if (!$user || !$user->canEditProducts()) {
+            return response()->json([
+                'error' => "Accès refusé. Seul l'administrateur de la boutique peut restaurer un produit."
+            ], 403);
+        }
+
         $boutique_id = $this->getBoutiqueId();
         if (!$boutique_id) {
             return response()->json(['error' => 'Aucune boutique sélectionnée'], 400);

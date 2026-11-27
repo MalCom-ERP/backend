@@ -59,22 +59,26 @@ Route::middleware(['auth:sanctum', 'check.user.active', 'check.boutique.active']
         Route::apiResource('categories', CategorieController::class);
 
         // Products Routes
-        Route::post('produits/import-csv', [ProduitController::class, 'importCSV']);
+        Route::post('produits/import-csv', [ProduitController::class, 'importCSV'])->middleware('role:admin');
         Route::get('produits/trashed', [ProduitController::class, 'trashed']);
-        Route::post('produits/{id}/restore', [ProduitController::class, 'restore']);
+        Route::post('produits/{id}/restore', [ProduitController::class, 'restore'])->middleware('role:admin');
         Route::get('produits/editProd/{produit}', [ProduitController::class, 'editProd']);
         Route::get('produits/stock-inter-filiales/recherche', [ProduitController::class, 'searchStockInterFiliales']);
         Route::get('produits/{id}/disponibilites-filiales', [ProduitController::class, 'disponibilitesFiliales']);
-        Route::post('produits/{produit}', [ProduitController::class, 'update']);
-        Route::apiResource('produits', ProduitController::class);
+        Route::post('produits/{produit}', [ProduitController::class, 'update'])->middleware('role:admin');
+        Route::get('produits', [ProduitController::class, 'index']);
+        Route::post('produits', [ProduitController::class, 'store']);
+        Route::get('produits/{produit}', [ProduitController::class, 'show']);
+        Route::match(['put', 'patch'], 'produits/{produit}', [ProduitController::class, 'update'])->middleware('role:admin');
+        Route::delete('produits/{produit}', [ProduitController::class, 'destroy'])->middleware('role:admin');
 
         // Profile Routes
         Route::get('profil/{id}', [AuthController::class, 'getProfil']);
         Route::put('profil/{id}', [AuthController::class, 'updateProfil']);
 
         // Reapprovisionnement
-        Route::post('reappro', [ProduitController::class, 'reapproCreate']);
-        Route::get('reappro', [ProduitController::class, 'reapproIndex']);
+        Route::post('reappro', [ProduitController::class, 'reapproCreate'])->middleware('role:admin');
+        Route::get('reappro', [ProduitController::class, 'reapproIndex'])->middleware('role:admin');
         Route::get('rupture', [ProduitController::class, 'rupture']);
         Route::get('stock', [ProduitController::class, 'stock']);
 
@@ -155,17 +159,17 @@ Route::middleware(['auth:sanctum', 'check.user.active', 'check.boutique.active']
         // Fournisseurs, Commandes / Réceptions d'Achats & Dettes (Compte 401 SYSCOHADA)
         Route::get('fournisseurs', [App\Http\Controllers\FournisseurController::class, 'index']);
         Route::post('fournisseurs', [App\Http\Controllers\FournisseurController::class, 'store']);
-        Route::get('fournisseurs/achats', [App\Http\Controllers\FournisseurController::class, 'achatsIndex']);
-        Route::post('fournisseurs/achats', [App\Http\Controllers\FournisseurController::class, 'achatStore']);
-        Route::get('fournisseurs/achats/{id}', [App\Http\Controllers\FournisseurController::class, 'achatShow']);
-        Route::post('fournisseurs/achats/{id}/receptionner', [App\Http\Controllers\FournisseurController::class, 'receptionner']);
-        Route::post('fournisseurs/achats/{id}/paiements', [App\Http\Controllers\FournisseurController::class, 'enregistrerPaiement']);
+        Route::get('fournisseurs/achats', [App\Http\Controllers\FournisseurController::class, 'achatsIndex'])->middleware('role:admin,comptable');
+        Route::post('fournisseurs/achats', [App\Http\Controllers\FournisseurController::class, 'achatStore'])->middleware('role:admin');
+        Route::get('fournisseurs/achats/{id}', [App\Http\Controllers\FournisseurController::class, 'achatShow'])->middleware('role:admin,comptable');
+        Route::post('fournisseurs/achats/{id}/receptionner', [App\Http\Controllers\FournisseurController::class, 'receptionner'])->middleware('role:admin');
+        Route::post('fournisseurs/achats/{id}/paiements', [App\Http\Controllers\FournisseurController::class, 'enregistrerPaiement'])->middleware('role:admin,comptable');
         Route::put('fournisseurs/{id}', [App\Http\Controllers\FournisseurController::class, 'update']);
         Route::delete('fournisseurs/{id}', [App\Http\Controllers\FournisseurController::class, 'destroy']);
 
         // Valorisation du Stock & Régularisation des Écarts (Axe 2)
         Route::get('stocks/valuation', [TransfertController::class, 'stockValuation']);
-        Route::post('stocks/adjustment', [TransfertController::class, 'stockAdjustment']);
+        Route::post('stocks/adjustment', [TransfertController::class, 'stockAdjustment'])->middleware('role:admin');
 
         // Expenses Routes
 

@@ -65,7 +65,7 @@ class AuthController extends Controller
         return response()->json([
             'user' => $user,
             'user_role' => $user->role,
-            'permissions' => $user->permissions ?? [],
+            'permissions' => $user->getEffectivePermissions(),
             'boutique_id' => $user->boutique_id ?: (\App\Models\Boutique::first()?->id),
             'date_expiration' => $boutique?->date_expiration_licence,
             'date_expiration_formatee' => $boutique?->date_expiration_licence ? \Carbon\Carbon::parse($boutique->date_expiration_licence)->format('d/m/Y') : null,
@@ -145,6 +145,10 @@ class AuthController extends Controller
         ]);
 
         $permissions = $request->input('permissions', null);
+        if (is_array($permissions) && strtolower(trim((string) $fields['role'])) === 'gestionnaire') {
+            $permissions['can_reappro'] = false;
+            $permissions['can_change_prices'] = false;
+        }
 
         $user = User::create([
             'name' => $fields['name'],
@@ -175,7 +179,17 @@ class AuthController extends Controller
         $user->boutique_id = $fields['boutique_id'];
 
         if ($request->has('permissions')) {
-            $user->permissions = is_array($request->permissions) ? $request->permissions : null;
+            $perms = is_array($request->permissions) ? $request->permissions : null;
+            if (is_array($perms) && $user->isGestionnaireRole()) {
+                $perms['can_reappro'] = false;
+                $perms['can_change_prices'] = false;
+            }
+            $user->permissions = $perms;
+        } elseif ($user->isGestionnaireRole() && is_array($user->permissions)) {
+            $perms = $user->permissions;
+            $perms['can_reappro'] = false;
+            $perms['can_change_prices'] = false;
+            $user->permissions = $perms;
         }
 
         if (request()->has('is_active')) {
